@@ -1,0 +1,17 @@
+-- 00-create-dbs.sql — one database per service (SPEC §7) plus infra DBs.
+-- Runs once on first container start (postgres docker-entrypoint-initdb.d).
+-- NOTE: subsequent scripts use psql meta-commands (\c) and must run under
+-- docker-entrypoint-initdb.d's `*.sql` psql path — do not pipe them to plain psql.
+
+CREATE DATABASE identity;
+CREATE DATABASE booking;
+CREATE DATABASE conversation;
+CREATE DATABASE knowledge;
+CREATE DATABASE analytics_meta;
+CREATE DATABASE temporal;
+CREATE DATABASE keycloak;
+CREATE DATABASE permify;
+CREATE DATABASE iceberg;
+-- SPEC-CRM §A/§B: Twenty CRM database + crm-sync-service sync_map database.
+CREATE DATABASE twenty;
+CREATE DATABASE crm_sync;

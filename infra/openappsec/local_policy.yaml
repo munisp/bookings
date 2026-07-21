@@ -1,0 +1,157 @@
+# open-appsec nano-agent local policy (v1beta1 file format).
+#
+# Consumed by the `openappsec` agent container, which mounts this directory at /ext/appsec
+# (see infra/docker-compose.edge.yml). The agent watches the file and hot-reloads changes.
+#
+# DEV POSTURE: everything runs in `detect-learn` — events are logged, nothing is blocked.
+# Flip `policies.default.mode` (and the specific rules) to `prevent-learn` for staging/prod
+# once the ML engine has learned the traffic baseline. `override-mode: as-top-level` in the
+# practices makes them inherit the policy-level mode, so one flag flips enforcement.
+
+policies:
+  default:
+    mode: detect-learn
+    practices:
+      - opendesk-web-attack-practice
+      - opendesk-api-discovery-practice
+    triggers:
+      - opendesk-log-trigger
+    custom-response: opendesk-web-user-response
+  specific-rules:
+    # Per-asset rules give the contextual ML engine one learning model per surface.
+    # Hosts are matched as seen by the gateway (dev gateway is localhost:9080; host header
+    # excludes the port).
+    - host: localhost/api
+      mode: detect-learn
+      practices:
+        - opendesk-web-attack-practice
+        - opendesk-api-discovery-practice
+      triggers:
+        - opendesk-log-trigger
+      custom-response: opendesk-web-user-response
+    - host: localhost/p
+      mode: detect-learn
+      practices:
+        - opendesk-web-attack-practice
+      triggers:
+        - opendesk-log-trigger
+      custom-response: opendesk-web-user-response
+    - host: localhost
+      mode: detect-learn
+      practices:
+        - opendesk-web-attack-practice
+      triggers:
+        - opendesk-log-trigger
+      custom-response: opendesk-web-user-response
+
+practices:
+  # 1) Web attack protection: contextual ML engine for SQLi/XSS/traversal/RCE etc.
+  - name: opendesk-web-attack-practice
+    web-attacks:
+      override-mode: as-top-level       # inherit mode from the referencing policy rule
+      minimum-confidence: medium        # dev: log more, tune up to `high` for prevent mode
+      max-url-size-bytes: 32768
+      max-header-size-bytes: 102400
+      max-object-depth: 40
+      max-body-size-kb: 2048
+      protections:
+        csrf-enabled: inactive
+        error-disclosure-enabled: detect-learn
+        open-redirect-enabled: detect-learn
+        non-valid-http-methods: false
+    snort-signatures:
+      override-mode: inactive           # enable with a rules file for signature-based coverage
+      files: []
+    openapi-schema-validation:
+      override-mode: inactive
+      files: []
+    anti-bot:
+      override-mode: inactive           # premium capability; disabled in OSS dev
+      injected-URIs: []
+      validated-URIs: []
+
+  # 2) API discovery: open-appsec's engine auto-discovers the API surface (paths, methods,
+  #    parameter names/types) of each protected asset while in detect-learn and exposes it
+  #    as the learned API schema. This practice keeps schema validation in detect mode so
+  #    discovered-schema drift on /api/* is logged, never blocked, in dev. To enforce,
+  #    export the learned schema (or point `files` at docs/api/openapi/*.yaml) and switch
+  #    to prevent-learn.
+  - name: opendesk-api-discovery-practice
+    web-attacks:
+      override-mode: as-top-level
+      minimum-confidence: high
+      max-url-size-bytes: 32768
+      max-header-size-bytes: 102400
+      max-object-depth: 40
+      max-body-size-kb: 2048
+      protections:
+        csrf-enabled: inactive
+        error-disclosure-enabled: inactive
+        open-redirect-enabled: inactive
+        non-valid-http-methods: false
+    openapi-schema-validation:
+      override-mode: detect-learn
+      files: []                          # mount an OpenAPI file here to validate against it
+    snort-signatures:
+      override-mode: inactive
+      files: []
+    anti-bot:
+      override-mode: inactive
+      injected-URIs: []
+      validated-URIs: []
+
+log-triggers:
+  - name: opendesk-log-trigger
+    access-control-logging:
+      allow-events: false
+      drop-events: true
+    appsec-logging:
+      all-web-requests: false           # flip to true temporarily when debugging an integration
+      detect-events: true
+      prevent-events: true
+    additional-suspicious-events-logging:
+      enabled: true
+      minimum-severity: high
+      response-body: false
+      response-code: true
+    extended-logging:
+      url-path: true
+      url-query: true
+      http-headers: false
+      request-body: false               # never log bodies: transcripts/PII flow through the gateway
+    log-destination:
+      cloud: false                      # no SaaS connection in dev; logs stay local
+      stdout:
+        format: json
+
+custom-responses:
+  - name: opendesk-web-user-response
+    mode: response-code-only
+    http-response-code: 403
+
+# ---------------------------------------------------------------------------
+# RUNBOOK: detect -> prevent promotion (SPEC-W3 §2; full version in
+# docs/runbooks/security.md)
+#
+# 1) LEARNING PERIOD: run everything in `detect-learn` for >= 1 week of
+#    representative traffic (or one full e2e + smoke suite). The contextual ML
+#    engine builds one model per specific-rule host above. Review events:
+#      docker logs opendesk-openappsec | jq 'select(.event."Event Type"=="Log")'
+#    Tune false positives via specific-rules before enforcing anything.
+# 2) ENFORCE SWITCH: set `policies.default.mode: prevent-learn` and the mode
+#    of each specific rule you want enforced (they inherit via
+#    `override-mode: as-top-level`). Also raise the web-attack practice
+#    `minimum-confidence` to `high` so borderline traffic is not blocked.
+# 3) API DISCOVERY SCHEMA UPLOAD: the engine auto-discovers the /api/* schema
+#    while learning. To validate requests against the AUTHORITATIVE spec
+#    instead of the learned one, mount the OpenAPI files into the agent
+#    container and reference them in the discovery practice:
+#      volumes: [ ../docs/api/openapi:/ext/openapi:ro ]
+#      practices[opendesk-api-discovery-practice].openapi-schema-validation:
+#        override-mode: prevent-learn
+#        files: [ "/ext/openapi/booking.yaml", "/ext/openapi/identity.yaml",
+#                 "/ext/openapi/payments.yaml" ]
+#    Specs live in docs/api/openapi/ (booking, identity, payments).
+# 4) Rollback: set the modes back to detect-learn — the agent hot-reloads
+#    this file, no restart needed.
+# ---------------------------------------------------------------------------
