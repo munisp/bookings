@@ -1,144 +1,94 @@
 # OpenDesk — Open-Source AI Receptionist Platform (SOTA)
 
-A fully open-source, multi-tenant **AI receptionist / front-desk SaaS**: every appointment-based business gets a branded public booking page with **voice + chat AI** that answers questions, checks real-time availability, and books appointments — plus an admin dashboard with bookings, calendar, analytics, payments, and CRM.
+A fully open-source, multi-tenant **AI receptionist / front-desk SaaS**: every appointment-based business gets a branded public booking page with a **voice + text AI concierge** that answers questions and books, reschedules, and cancels appointments live — plus a tenant dashboard for staff.
 
-**Stack:** Go microservices · Next.js 14 · PostgreSQL · Redis · LiveKit · LiveKit Agents (Python) · Stripe · Docker Compose
+OpenDesk is a state-of-the-art superset of the YouTube demo
+[`sonnysangha/AI-Receptionist-Live-YouTube-Demo`](https://github.com/sonnysangha/AI-Receptionist-Live-YouTube-Demo)
+(Next.js + Clerk + Convex + ElevenLabs). Same product, zero proprietary dependencies, plus an enterprise middleware backbone: **Kafka · Dapr · Fluvio · Temporal · Postgres · Keycloak · Permify · Redis · Mojaloop · OpenSearch · OpenAppSec · APISIX · TigerBeetle · Lakehouse (Iceberg/MinIO/Spark/Trino/dbt)**.
 
----
+Services are written in **Go** (identity, booking, notification), **Rust** (payments/ledger, WS edge, Fluvio smart module), and **Python** (voice agent runtime, conversation, knowledge/RAG, analytics), with a Next.js web app.
 
-## Quick Start
+## Why it supersedes the baseline
+
+| Baseline | OpenDesk |
+|---|---|
+| Clerk auth/orgs/billing | Keycloak OIDC + Permify ReBAC + TigerBeetle ledger + Mojaloop rails |
+| Convex black-box reactivity | Postgres (RLS) + Kafka events + Rust WebSocket edge |
+| ElevenLabs-only voice | Self-hosted LiveKit + whisper + Piper + Ollama/vLLM (ElevenLabs adapter optional) |
+| Single shared agent, no durability | Temporal sagas with compensation; idempotent commands; DLQ |
+| No analytics | Lakehouse bronze/silver/gold marts, Trino SQL, containment & revenue metrics |
+| No edge security | APISIX + OpenAppSec WAF + rate limits |
+| No CRM | Self-hosted Twenty CRM with one-way event sync (crm-sync) + reverse webhook intake |
+| One-size-fits-all flows | Industry workflow packs (salon, clinic, consultancy, support-desk): terminology, booking policy, persona + Temporal workflow variants |
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
+
+## Quick start
 
 ```bash
-cp .env.example .env          # fill in your keys
-docker compose up --build -d  # start everything
+git clone <this repo> && cd opendesk
+make config        # validate compose
+make up            # build & start everything (~15 images, first build takes a while)
+make seed          # demo tenant "acme" with catalog + knowledge
+./scripts/seed-industries.sh   # 4 demo tenants, one per industry pack (acme-salon, acme-clinic, acme-consult, acme-support)
+make smoke         # end-to-end checks through the gateway
 ```
 
-Then:
+Then open:
 
-- **Business portal (admin):** http://localhost:3000 → sign up → create org → get slug
-- **Public booking page:** http://localhost:3001/acme-dental (your org slug)
-- **Voice/chat AI:** built into the booking page (requires LiveKit + OpenAI keys)
-- **Monitoring:** Jaeger http://localhost:16686 · Prometheus http://localhost:9090
+| UI | URL |
+|---|---|
+| Public booking page | http://localhost:9080/p/acme (or http://localhost:3001/p/acme) |
+| Tenant dashboard | http://localhost:3001/app/acme (Keycloak login: `admin` / `admin123`) |
+| CRM UI (Twenty) | http://localhost:3100 |
+| Grafana (observability profile) | http://localhost:3002 |
+| Keycloak admin | http://localhost:8080 |
+| Temporal UI | http://localhost:8233 |
+| OpenSearch Dashboards | http://localhost:5601 |
+| APISIX admin | http://localhost:9180 |
+| MinIO console | http://localhost:9001 |
+| Trino | `make trino` |
 
-To seed demo data (org, services, staff, availability):
+Voice mode with local models: `make up-voice` (pulls Ollama `qwen3:8b` and a Piper voice — see `services/voice-agent-runtime/README.md` for the model-routing table, including the MiniMax-M2 long-context option).
 
-```bash
-make seed
-```
+Observability profile: `docker compose -f infra/docker-compose.observability.yml up` brings up Prometheus, Grafana (pre-provisioned dashboards for platform overview, Temporal/saga latency and AI/voice), an OTel collector and Loki. Backups: `infra/backups/backup.sh` (pg_dump + MinIO mirror + TigerBeetle data copy with rotation; `restore.sh` alongside).
 
----
+## Wave 3 feature highlights
 
-## What's Inside
+| Feature | Where |
+|---|---|
+| Streaming chat (SSE) | Public page chat widget streams LLM tokens from `/voice/chat` (`stream: true`), with request/response fallback |
+| Theme editor + live preview | Dashboard → Public Site: primary colour, logo, hero title/subtitle, template — saved to `theme` jsonb with a live `/p/{slug}` preview pane |
+| Embeddable widget | `<script src="…/embed.js" data-site="{slug}">` iframe loader + chromeless `/embed/{slug}` page — see [docs/embedding.md](docs/embedding.md) |
+| Staff self-service | Dashboard → My Schedule (`GET /v1/bookings?mine=true`, resolved from the JWT email) |
+| KB review queue | Dashboard → Knowledge → Review queue: approve/reject auto-drafted answers to unanswered questions |
+| Conversational analytics | Dashboard → Analytics: plain-language questions over the lakehouse gold marts (guarded text-to-SQL, result table + SQL audit) |
+| Pricing recommendations | Dashboard → Billing: lakehouse-computed peak multipliers / deposit % — human-review only, never auto-applied |
+| Warm handoff | Voice runtime escalates to a LiveKit room; dashboard toast lets staff join the call (`EscalationRequested` over `/ws`) |
+| Backups & observability | `infra/backups/` scripts + Prometheus/Grafana/OTel/Loki compose profile |
 
-| Area | Path | Tech |
-|---|---|---|
-| Public booking widget | `apps/booking-widget` | Next.js 14, LiveKit voice/chat |
-| Admin dashboard | `apps/admin-web` | Next.js 14, NextAuth, org-scoped |
-| Auth service | `services/auth-service` | Go, magic links, JWT |
-| Booking service | `services/booking-service` | Go, availability engine, bookings |
-| Billing service | `services/billing-service` | Go, Stripe subscriptions, webhooks |
-| AI agent | `services/agent-service` | Python, LiveKit Agents, OpenAI |
-| Proto contracts | `proto` | Protobuf / gRPC + gRPC-Gateway |
-| Database migrations | `db/migrations` | golang-migrate |
-| Infra | `docker-compose.yml`, `Makefile`, `monitoring/` | Docker, Prometheus, Jaeger |
-
----
-
-## Feature Coverage
-
-- ✅ Public booking page per org (`/{org-slug}`) with brand color + services
-- ✅ AI chat (text) on booking page — knowledge-grounded via org FAQs
-- ✅ AI voice on booking page (LiveKit) — *"Book me a haircut tomorrow at 2pm"*
-- ✅ Real-time availability engine (staff schedules + slot locking)
-- ✅ Booking flow: service → staff → slot → confirm → email
-- ✅ Admin: bookings list, calendar, analytics (bookings/revenue/no-shows), CRM (customers, notes)
-- ✅ Stripe billing: subscription tiers, webhooks
-- ✅ Notifications: email via Resend, SMS via Twilio (adapters; set keys to enable)
-- ✅ Multi-tenant org isolation (all data scoped by `org_id`)
-- ✅ Observability: OpenTelemetry traces, Prometheus metrics, health endpoints
-
----
-
-## Setup Details
-
-### 1. Environment
-
-Copy `.env.example` → `.env`. Minimum to boot everything: Postgres/Redis are in compose. For AI voice you need:
-
-```env
-OPENAI_API_KEY=sk-...
-LIVEKIT_URL=wss://your-project.livekit.cloud
-LIVEKIT_API_KEY=...
-LIVEKIT_API_SECRET=...
-```
-
-Free-tier friendly: LiveKit Cloud, Resend, Stripe test mode all have free tiers.
-
-### 2. Services
-
-`make up` → runs migrations, then all services. Or `make dev` for local Go/Pnpm dev.
-
-| Service | Port | Health |
-|---|---|---|
-| admin-web | 3000 | /api/health |
-| booking-widget | 3001 | / |
-| auth-service | 8080 | /health |
-| booking-service | 8081 | /health |
-| billing-service | 8082 | /health |
-| agent-service | 8083 | /health (joins LiveKit rooms) |
-
-### 3. Voice AI (LiveKit Agents)
-
-`services/agent-service` is a Python LiveKit Agent worker. It:
-- joins rooms named `booking-{orgId}-{visitorId}`,
-- uses OpenAI Realtime (or STT→LLM→TTS fallback) for speech,
-- has tool functions: `get_services`, `get_faqs`, `check_availability`, `create_booking` — it calls the booking-service gRPC/HTTP API to actually book.
-
-The widget's chat/voice panel connects via LiveKit; text chat works without LiveKit (direct LLM call via API route).
-
-### 4. Auth
-
-- **Business owners:** email magic link → NextAuth session in admin-web.
-- **Public visitors:** no account needed to book (name/email/phone collected at checkout).
-
----
-
-## API / Contracts
-
-Protos in `proto/`. Each Go service exposes:
-- gRPC (internal, `:90xx`)
-- HTTP via gRPC-Gateway (external, `:808x`)
-
-Example (booking):
+## Repository layout
 
 ```
-GET  /v1/orgs/{orgSlug}/services
-GET  /v1/orgs/{orgId}/availability?serviceId=...&staffId=...&date=...
-POST /v1/bookings { orgId, serviceId, staffId, slot, customer }
+infra/          middleware stacks (compose + configs): apisix, openappsec, keycloak, permify,
+                kafka, fluvio, temporal, postgres, redis, tigerbeetle, mojaloop, opensearch, lakehouse
+services/       Go / Rust / Python microservices (each with Dockerfile + README)
+apps/admin-web/ Next.js dashboard + public booking page
+docs/           ARCHITECTURE.md, ADRs, OpenAPI specs, runbooks
+scripts/        seed + smoke test
+SPEC.md         (../SPEC.md) the platform contract
 ```
 
----
+## The 6 agent tools (parity with baseline, hardened)
+
+`get_business_info` · `get_availability` · `book_appointment` · `lookup_appointment` · `reschedule_appointment` · `cancel_appointment`
+
+All tools are executed server-side via Dapr service invocation; the tenant is resolved from the public site slug — the model can never supply an organization ID. Booking mutations require a confirmed contact phone number (browser sessions have no caller ID) enforced both in the agent and in the booking command validator.
 
 ## Development
 
-```bash
-make proto     # regenerate protobuf stubs
-make test      # go test ./... + pnpm test
-make seed      # demo data
-make logs      # tail all services
-```
+Each service is independently runnable; see its README. Integration contracts (ports, topics, CloudEvents envelope, schemas) are defined in `../SPEC.md` — treat it as sacred.
 
-Repo layout is a monorepo: `apps/` (Next.js), `services/` (Go + Python), `packages/` (shared TS), `db/`, `infra/`.
+## License
 
----
-
-## Roadmap / Extending
-
-- Calendar sync (Google Calendar) — stub in booking-service
-- Payments for bookings (Stripe Checkout per booking, not just subscriptions)
-- More channels: WhatsApp, phone (Twilio SIP → LiveKit)
-- Multi-language AI agent
-
----
-
-MIT licensed. Built to be hacked on.
+Apache-2.0
