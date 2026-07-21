@@ -1,0 +1,98 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: >
+      Raw Iceberg namespace populated by analytics-pipeline Kafka consumers
+      (SPEC §13). Assumed columns documented here and in dbt_project.yml.
+    database: iceberg
+    schema: bronze
+    tables:
+      - name: booking_events
+        description: One row per CloudEvents booking event (raw sink).
+        columns:
+          - name: event_id
+            description: CloudEvents envelope id.
+            tests: [not_null]
+          - name: event_type
+            description: BookingCreated|BookingConfirmed|BookingRescheduled|BookingCancelled|BookingNoShow
+            tests: [not_null]
+          - name: tenant_id
+            tests: [not_null]
+          - name: booking_id
+            tests: [not_null]
+          - name: status
+          - name: source
+          - name: price_cents
+          - name: currency
+          - name: starts_at
+          - name: occurred_at
+            tests: [not_null]
+          - name: offering_id
+            description: Offering the booking belongs to (SPEC-W3 §3 revenue intelligence).
+      - name: transcripts
+        description: One row per ConversationTurn (PII-redacted by Fluvio smart module).
+        columns:
+          - name: conversation_id
+            tests: [not_null]
+          - name: tenant_id
+            tests: [not_null]
+          - name: role
+            description: user|agent|human_agent|system|tool (any case in bronze).
+          - name: text
+          - name: ts
+            tests: [not_null]
+          - name: audio_url
+      - name: payment_events
+        description: One row per payment/ledger event.
+        columns:
+          - name: event_id
+            tests: [not_null]
+          - name: event_type
+          - name: tenant_id
+            tests: [not_null]
+          - name: booking_id
+          - name: amount_cents
+            tests: [not_null]
+          - name: currency
+          - name: transfer_code
+            description: TigerBeetle code 100 hold / 101 capture / 102 refund / 103 no-show fee / 104 payout.
+          - name: ledger_ref
+          - name: occurred_at
+            tests: [not_null]
+
+models:
+  - name: stg_booking_events
+    description: Standardized booking events (silver view).
+    columns:
+      - name: event_id
+        tests:
+          - not_null
+          - unique
+      - name: tenant_id
+        tests: [not_null]
+      - name: event_type
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['bookingcreated', 'bookingconfirmed', 'bookingrescheduled', 'bookingcancelled', 'bookingnoshow']
+      - name: source
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['web', 'voice', 'chat', 'unknown']
+      - name: event_day
+        tests: [not_null]
+
+  - name: stg_transcripts
+    description: Standardized transcript turns (silver view).
+    columns:
+      - name: conversation_id
+        tests: [not_null]
+      - name: tenant_id
+        tests: [not_null]
+      - name: role
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['user', 'agent', 'human_agent', 'system', 'tool']

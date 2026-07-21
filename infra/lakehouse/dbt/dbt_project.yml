@@ -1,0 +1,64 @@
+name: opendesk_lakehouse
+version: 1.0.0
+config-version: 2
+profile: opendesk_lakehouse
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - target
+  - dbt_packages
+
+# ---------------------------------------------------------------------------
+# Assumed BRONZE schemas (raw Iceberg tables written by analytics-pipeline, SPEC §13).
+# These are declared formally in models/silver/schema.yml as dbt sources:
+#
+#   iceberg.bronze.booking_events  — one row per CloudEvents booking event
+#     event_id      varchar   unique event envelope id (CloudEvents `id`)
+#     event_type    varchar   BookingCreated|BookingConfirmed|BookingRescheduled|
+#                             BookingCancelled|BookingNoShow
+#     tenant_id     varchar   tenant UUID
+#     booking_id    varchar
+#     status        varchar   pending|confirmed|cancelled|no_show
+#     source        varchar   web|voice|chat
+#     price_cents   bigint    offering price snapshot
+#     currency      varchar   ISO-4217
+#     starts_at     timestamp appointment start
+#     occurred_at   timestamp event time (Kafka/CloudEvents `time`)
+#
+#   iceberg.bronze.transcripts — one row per ConversationTurn (PII-redacted upstream)
+#     conversation_id varchar
+#     tenant_id       varchar
+#     role            varchar   user|agent|human_agent|system|tool
+#                               (`human_agent` turn = escalated to a human; absence of any
+#                               such turn in a conversation defines "agent containment")
+#     text            varchar
+#     ts              timestamp
+#     audio_url       varchar   nullable
+#
+#   iceberg.bronze.payment_events — one row per ledger-related payment event
+#     event_id      varchar
+#     event_type    varchar   PaymentPosted|DepositHeld|DepositCaptured|Refund|NoShowFee|Payout
+#     tenant_id     varchar
+#     booking_id    varchar
+#     amount_cents  bigint
+#     currency      varchar
+#     transfer_code integer   TigerBeetle code: 100 hold, 101 capture, 102 refund,
+#                             103 no-show fee, 104 payout (SPEC §9)
+#     ledger_ref    varchar
+#     occurred_at   timestamp
+# ---------------------------------------------------------------------------
+
+models:
+  opendesk_lakehouse:
+    silver:
+      +materialized: view
+      +schema: silver
+    gold:
+      +materialized: table
+      +schema: gold

@@ -1,0 +1,86 @@
+version: 2
+
+models:
+  - name: daily_bookings_per_tenant
+    description: Booking funnel counts per tenant per day (gold table).
+    tests:
+      - unique:
+          column_name: "tenant_id || '|' || cast(day as varchar)"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: day
+        tests: [not_null]
+      - name: bookings_created
+      - name: bookings_confirmed
+      - name: bookings_cancelled
+      - name: no_shows
+
+  - name: revenue_daily
+    description: Captured/refunded/no-show-fee and net revenue per tenant per day per currency.
+    tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "net_revenue_cents = captured_revenue_cents - refunded_cents + no_show_fees_cents"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: day
+        tests: [not_null]
+      - name: currency
+        tests: [not_null]
+      - name: net_revenue_cents
+
+  - name: no_show_rate
+    description: No-show share of expected appointments per tenant per day.
+    tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "no_show_rate >= 0 and no_show_rate <= 1"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: day
+        tests: [not_null]
+      - name: no_show_rate
+
+  - name: agent_containment_rate
+    description: Share of conversations with no human handoff per tenant per day.
+    tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "containment_rate >= 0 and containment_rate <= 1"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: day
+        tests: [not_null]
+      - name: conversations_total
+      - name: containment_rate
+
+  - name: reco_pricing
+    description: >
+      Pricing recommendations per tenant/offering (peak-hour distribution,
+      suggested peak multiplier, suggested deposit pct from the no-show band).
+      Written by the Spark revenue_intelligence job; this model is a
+      passthrough view (SPEC-W3 §3 innovation 9).
+    tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "suggested_peak_multiplier >= 1.0 and suggested_deposit_pct between 0 and 100"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "peak_hour between 0 and 23 and peak_share between 0 and 1 and no_show_rate between 0 and 1"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: offering_id
+        tests: [not_null]
+      - name: computed_at
+      - name: bookings_30d
+      - name: net_revenue_cents_30d
+      - name: peak_hour
+      - name: peak_share
+      - name: no_show_rate
+      - name: suggested_peak_multiplier
+      - name: suggested_deposit_pct
