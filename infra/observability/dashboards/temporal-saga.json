@@ -1,0 +1,89 @@
+{
+  "uid": "opendesk-temporal-saga",
+  "title": "OpenDesk — Temporal / Saga",
+  "description": "Booking saga and worker health. Panels that reference `opendesk_saga_*` metrics populate once the Go services ship their /metrics endpoints (Wave 3-4 work); crm-sync and analytics panels are live today.",
+  "tags": ["opendesk", "temporal", "saga"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": {"from": "now-6h", "to": "now"},
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Saga execution latency (p50/p95/p99)",
+      "description": "BookingSagaWorkflow end-to-end duration histogram (opendesk_saga_duration_seconds, emitted by notification-worker once its /metrics endpoint lands).",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.50, sum(rate(opendesk_saga_duration_seconds_bucket[5m])) by (le, workflow))", "legendFormat": "p50 {{workflow}}"},
+        {"refId": "B", "expr": "histogram_quantile(0.95, sum(rate(opendesk_saga_duration_seconds_bucket[5m])) by (le, workflow))", "legendFormat": "p95 {{workflow}}"},
+        {"refId": "C", "expr": "histogram_quantile(0.99, sum(rate(opendesk_saga_duration_seconds_bucket[5m])) by (le, workflow))", "legendFormat": "p99 {{workflow}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Saga outcomes (completed / compensated / failed)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum by (outcome) (rate(opendesk_saga_total[5m]))", "legendFormat": "{{outcome}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Activity latency by step (ReserveSlot / HoldDeposit / ConfirmBooking / SendConfirmation)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(opendesk_saga_activity_duration_seconds_bucket[5m])) by (le, activity))", "legendFormat": "{{activity}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Booking events consumed (analytics sink, per topic)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum by (topic) (rate(analytics_messages_consumed_total[5m]))", "legendFormat": "{{topic}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "CRM sync: events processed vs DLQ'd",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum by (name) (rate(crm_sync_counter{name=~\"events_processed.*|dlq.*|events_failed.*\"}[5m]))", "legendFormat": "{{name}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "CRM sync: Twenty API call latency (p95)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(crm_sync_twenty_call_duration_seconds_bucket[5m])) by (le, path_class))", "legendFormat": "{{path_class}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    }
+  ]
+}

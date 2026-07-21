@@ -1,0 +1,47 @@
+# OTel Collector: receives OTLP (traces/metrics/logs) and re-exports to
+# logging (debug) + prometheus (metrics bridge, scraped at :8889).
+# APISIX's opentelemetry plugin sends spans to otel-collector:4318 (see
+# infra/apisix/config.yaml); app services can point OTEL_EXPORTER_OTLP_ENDPOINT
+# at http://otel-collector:4318.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 2s
+    send_batch_size: 512
+
+exporters:
+  logging:
+    verbosity: basic
+    sampling_initial: 10
+    sampling_thereafter: 100
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion:
+      enabled: true
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [logging]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [logging, prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [logging]

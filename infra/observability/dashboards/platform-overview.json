@@ -1,0 +1,109 @@
+{
+  "uid": "opendesk-platform-overview",
+  "title": "OpenDesk — Platform Overview",
+  "description": "Service health, gateway HTTP rates/latency (APISIX prometheus plugin) and pipeline throughput. Services without a /metrics endpoint show as down until they ship one (currently analytics-pipeline and crm-sync expose /metrics; the rest are being added across Wave 3-4).",
+  "tags": ["opendesk", "platform"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": {"from": "now-6h", "to": "now"},
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Application services up",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count(up{job=~\"identity|booking|notification|payments|gateway-edge|voice|conversation|knowledge|analytics|crm-sync\"} == 1)"
+        },
+        {"refId": "B", "expr": "count(up{job=~\"identity|booking|notification|payments|gateway-edge|voice|conversation|knowledge|analytics|crm-sync\"})"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 0}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "textMode": "value"}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Gateway up (APISIX)",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [{"refId": "A", "expr": "max(up{job=\"apisix\"})"}],
+      "fieldConfig": {
+        "defaults": {"unit": "none", "decimals": 0, "mappings": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}]},
+        "overrides": []
+      },
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "textMode": "value"}
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Kafka consumer lag (analytics-pipeline)",
+      "description": "Highwater - position per topic/partition, reported by the analytics-pipeline consumer.",
+      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [{"refId": "A", "expr": "sum by (topic) (analytics_consumer_lag)", "legendFormat": "{{topic}}"}],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Gateway HTTP request rate (by route)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [{"refId": "A", "expr": "sum by (route) (rate(apisix_http_status[5m]))", "legendFormat": "{{route}}"}],
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Gateway HTTP latency p95 / p50",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(apisix_http_latency_bucket{type=\"request\"}[5m])) by (le))", "legendFormat": "p95"},
+        {"refId": "B", "expr": "histogram_quantile(0.50, sum(rate(apisix_http_latency_bucket{type=\"request\"}[5m])) by (le))", "legendFormat": "p50"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Gateway error rate (5xx)",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [{"refId": "A", "expr": "sum(rate(apisix_http_status{code=~\"5..\"}[5m]))", "legendFormat": "5xx/s"}],
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Lakehouse bronze rows written / flush errors",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum by (table) (rate(analytics_rows_written_total[5m]))", "legendFormat": "rows {{table}}"},
+        {"refId": "B", "expr": "sum(rate(analytics_flushes_total{outcome=\"error\"}[5m]))", "legendFormat": "flush errors"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 8,
+      "type": "logs",
+      "title": "Platform logs (errors, Loki)",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 12},
+      "datasource": {"type": "loki", "uid": "Loki"},
+      "targets": [{"refId": "A", "expr": "{container=~\"booking|identity|notification|payments|edge|voice|conversation|knowledge|analytics|crm-sync\"} |~ \"(?i)error|panic|fatal\""}],
+      "options": {"showTime": true, "showLabels": false, "wrapLogMessage": false, "prettifyLogMessage": false, "enableLogDetails": true, "dedupStrategy": "none", "sortOrder": "Descending"}
+    }
+  ]
+}

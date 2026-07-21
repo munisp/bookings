@@ -1,0 +1,59 @@
+# Prometheus scrape config for the OpenDesk dev/prod-compose topology.
+# All targets resolve over the `opendesk` docker network by service name.
+#
+# APISIX note: the prometheus plugin exports on its own port (9091, path
+# /apisix/prometheus/metrics), NOT the 9080 data-plane port — see
+# infra/apisix/config.yaml `plugin_attr.prometheus.export_addr`.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    stack: opendesk
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # ---- Application services (all expose /metrics on their app port) ----
+  - job_name: identity
+    static_configs:
+      - targets: ["identity:7001"]
+  - job_name: booking
+    static_configs:
+      - targets: ["booking:7002"]
+  - job_name: notification
+    static_configs:
+      - targets: ["notification:7003"]
+  - job_name: payments
+    static_configs:
+      - targets: ["payments:7004"]
+  - job_name: gateway-edge
+    static_configs:
+      - targets: ["edge:7005"]
+  - job_name: voice
+    static_configs:
+      - targets: ["voice:7006"]
+  - job_name: conversation
+    static_configs:
+      - targets: ["conversation:7007"]
+  - job_name: knowledge
+    static_configs:
+      - targets: ["knowledge:7008"]
+  - job_name: analytics
+    static_configs:
+      - targets: ["analytics:7009"]
+  - job_name: crm-sync
+    static_configs:
+      - targets: ["crm-sync:7010"]
+
+  # ---- APISIX gateway (prometheus plugin, see header note) ----
+  - job_name: apisix
+    metrics_path: /apisix/prometheus/metrics
+    static_configs:
+      - targets: ["apisix:9091"]
+
+  # ---- OTel collector prometheus exporter (OTLP -> prometheus bridge) ----
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]
