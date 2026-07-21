@@ -1,0 +1,104 @@
+# APISIX 3.9 node configuration for OpenDesk edge gateway.
+#
+# Deployment mode: STANDALONE (file-driven, data_plane role).
+#   - Routes/upstreams/consumers come from conf/apisix.yaml (this repo: infra/apisix/apisix.yaml),
+#     hot-reloaded by APISIX every second. Git is the control plane; no etcd writes.
+#   - The apisix-etcd container is still deployed (SPEC §3 port table reserves it) for a future
+#     migration to Admin-API-driven mode; APISIX does NOT read from it in this mode.
+#   - See docs/ADRs/0007-ledger-and-gateway-simplifications.md for the rationale.
+#
+# NOTE for the docker image entrypoint: keep `role: data_plane` unquoted on its own line;
+# apache/apisix docker images grep for that literal string in standalone checks.
+
+apisix:
+  node_listen:
+    - port: 9080
+      ip: 0.0.0.0
+  enable_admin: true          # read-only view of the file-driven config on :9180
+  enable_dev_mode: false
+  enable_ipv6: false
+  proxy_mode: http
+  extra_lua_path: ""
+  router:
+    http: radixtree_host_uri
+  # Control API used only for container healthchecks (not published to the host).
+  control:
+    ip: 0.0.0.0
+    port: 9090
+
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml
+  admin:
+    admin_listen:
+      ip: 0.0.0.0
+      port: 9180
+    admin_key_required: true
+    allow_admin:
+      - 172.16.0.0/12       # docker bridge/opendesk network ranges only
+      - 10.0.0.0/8
+      - 127.0.0.1
+    admin_key:
+      - name: admin
+        key: opendesk-dev-admin-key-change-me
+        role: admin
+      - name: viewer
+        key: opendesk-dev-viewer-key-change-me
+        role: viewer
+
+# Explicit plugin list (superset of defaults we rely on). open-appsec is intentionally NOT a
+# plugin here: the WAF is attached at the image level via ghcr.io/openappsec/apisix-attachment
+# (compose service `apisix-appsec`, profile `appsec`) which shares IPC with the nano agent.
+# See ADR-0007.
+plugins:
+  - real-ip
+  - client-control
+  - ext-plugin-pre-req        # kept enabled for the optional external WAF-runner pattern (ADR-0007)
+  - zipkin
+  - opentelemetry
+  - prometheus
+  - cors
+  - openid-connect
+  - jwt-auth
+  - key-auth
+  - limit-count
+  - limit-req
+  - proxy-rewrite
+  - response-rewrite
+  - redirect
+  - serverless-pre-function
+  - serverless-post-function
+  - ip-restriction
+  - ua-restriction
+  - uri-blocker
+  - request-validation
+  - gzip
+  - proxy-cache
+  - fault-injection
+  - mock
+
+plugin_attr:
+  prometheus:
+    export_addr:
+      ip: 0.0.0.0
+      port: 9091              # internal only; scrape via the opendesk network
+    metrics:
+      http_status:
+        extra_labels:
+          - upstream_addr: $upstream_addr
+  opentelemetry:
+    trace_id_source: x-request-id
+    resource:
+      service.name: opendesk-apisix
+    collector:
+      # Any OTLP/HTTP collector (otel-collector / Tempo / Jaeger) joined to the `opendesk`
+      # docker network under the alias `otel-collector` receives gateway traces.
+      address: otel-collector:4318
+      request_timeout: 3
+    batch_span_processor:
+      drop_on_queue_full: false
+      max_queue_size: 1024
+      batch_timeout: 2
+      inactive_timeout: 1
+      max_export_batch_size: 64

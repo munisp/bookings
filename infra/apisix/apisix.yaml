@@ -1,0 +1,586 @@
+# APISIX standalone declarative config (file-driven data plane) — OpenDesk edge routes.
+# Contract: SPEC §3 (ports) and SPEC §12 (routes & plugins). Hot-reloaded ~1s after save.
+#
+# WAF note: there is deliberately no `open-appsec` plugin block here. The open-appsec nano
+# agent attaches at the image level (compose service `apisix-appsec`, profile `appsec`,
+# image ghcr.io/openappsec/apisix-attachment sharing IPC with the `openappsec` agent
+# container). The stock apache/apisix:3.9.x gateway runs without inline WAF in dev.
+# See docs/ADRs/0007-ledger-and-gateway-simplifications.md.
+
+consumers:
+  # Service-to-service caller authenticating with an HS256 JWT issued by the Keycloak
+  # `service-accounts` client (realm `opendesk`). Dev-only symmetric secret; prod moves to
+  # RS256 via `public_key` + Keycloak realm keys. Documented in ADR-0007.
+  - username: opendesk-services
+    plugins:
+      jwt-auth:
+        key: opendesk-services
+        algorithm: HS256
+        secret: opendesk-dev-jwt-hs256-secret-change-in-prod
+        exp: 3600
+
+upstreams:
+  - id: identity
+    type: roundrobin
+    nodes:
+      "identity:7001": 1
+    retries: 1
+    timeout: {connect: 5, send: 30, read: 30}
+    checks:
+      active:
+        type: http
+        http_path: /healthz
+        healthy: {interval: 5, successes: 1, http_statuses: [200]}
+        unhealthy: {interval: 5, http_failures: 2, http_statuses: [500, 502, 503, 504]}
+        timeout: 2
+      passive:
+        type: http
+        healthy: {http_statuses: [200, 201, 204, 301, 302, 400, 401, 403, 404]}
+        unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
+
+  - id: booking
+    type: roundrobin
+    nodes:
+      "booking:7002": 1
+    retries: 1
+    timeout: {connect: 5, send: 30, read: 30}
+    checks:
+      active:
+        type: http
+        http_path: /healthz
+        healthy: {interval: 5, successes: 1, http_statuses: [200]}
+        unhealthy: {interval: 5, http_failures: 2, http_statuses: [500, 502, 503, 504]}
+        timeout: 2
+      passive:
+        type: http
+        healthy: {http_statuses: [200, 201, 204, 301, 302, 400, 401, 403, 404]}
+        unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
+
+  - id: payments
+    type: roundrobin
+    nodes:
+      "payments:7004": 1
+    retries: 1
+    timeout: {connect: 5, send: 30, read: 30}
+    checks:
+      active:
+        type: http
+        http_path: /healthz
+        healthy: {interval: 5, successes: 1, http_statuses: [200]}
+        unhealthy: {interval: 5, http_failures: 2, http_statuses: [500, 502, 503, 504]}
+        timeout: 2
+      passive:
+        type: http
+        healthy: {http_statuses: [200, 201, 204, 301, 302, 400, 401, 403, 404]}
+        unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
+
+  - id: knowledge
+    type: roundrobin
+    nodes:
+      "knowledge:7008": 1
+    retries: 1
+    timeout: {connect: 5, send: 30, read: 30}
+    checks:
+      active:
+        type: http
+        http_path: /healthz
+        healthy: {interval: 5, successes: 1, http_statuses: [200]}
+        unhealthy: {interval: 5, http_failures: 2, http_statuses: [500, 502, 503, 504]}
+        timeout: 2
+      passive:
+        type: http
+        healthy: {http_statuses: [200, 201, 204, 301, 302, 400, 401, 403, 404]}
+        unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
+
+  - id: conversation
+    type: roundrobin
+    nodes:
+      "conversation:7007": 1
+    retries: 1
+    timeout: {connect: 5, send: 30, read: 30}
+    checks:
+      active:
+        type: http
+        http_path: /healthz
+        healthy: {interval: 5, successes: 1, http_statuses: [200]}
+        unhealthy: {interval: 5, http_failures: 2, http_statuses: [500, 502, 503, 504]}
+        timeout: 2
+      passive:
+        type: http
+        healthy: {http_statuses: [200, 201, 204, 301, 302, 400, 401, 403, 404]}
+        unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
+
+  - id: edge
+    type: roundrobin
+    nodes:
+      "edge:7005": 1
+    retries: 0            # websocket fan-out: do not silently retry upgrades
+    timeout: {connect: 5, send: 3600, read: 3600}
+    checks:
+      active:
+        type: http
+        http_path: /healthz
+        healthy: {interval: 5, successes: 1, http_statuses: [200]}
+        unhealthy: {interval: 5, http_failures: 2, http_statuses: [500, 502, 503, 504]}
+        timeout: 2
+      passive:
+        type: http
+        healthy: {http_statuses: [200, 101, 204, 400, 401, 403, 404]}
+        unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
+
+  - id: voice
+    type: roundrobin
+    nodes:
+      "voice:7006": 1
+    retries: 0
+    timeout: {connect: 5, send: 3600, read: 3600}
+    checks:
+      active:
+        type: http
+        http_path: /healthz
+        healthy: {interval: 10, successes: 1, http_statuses: [200]}
+        unhealthy: {interval: 10, http_failures: 2, http_statuses: [500, 502, 503, 504]}
+        timeout: 2
+      passive:
+        type: http
+        healthy: {http_statuses: [200, 101, 204, 400, 401, 403, 404]}
+        unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
+
+  - id: twenty-api
+    type: roundrobin
+    nodes:
+      "twenty-api:3000": 1
+    retries: 1
+    timeout: {connect: 5, send: 60, read: 60}
+    checks:
+      active:
+        type: http
+        http_path: /healthz
+        healthy: {interval: 10, successes: 1, http_statuses: [200]}
+        unhealthy: {interval: 10, http_failures: 3, http_statuses: [500, 502, 503, 504]}
+        timeout: 3
+      passive:
+        type: http
+        healthy: {http_statuses: [200, 201, 204, 301, 302, 400, 401, 403, 404]}
+        unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
+
+  - id: web
+    type: roundrobin
+    nodes:
+      "web:3001": 1
+    retries: 1
+    timeout: {connect: 5, send: 60, read: 60}
+    checks:
+      active:
+        type: http
+        http_path: /
+        healthy: {interval: 10, successes: 1, http_statuses: [200, 307, 308]}
+        unhealthy: {interval: 10, http_failures: 3, http_statuses: [500, 502, 503, 504]}
+        timeout: 3
+      passive:
+        type: http
+        healthy: {http_statuses: [200, 201, 204, 301, 302, 307, 308, 400, 401, 403, 404]}
+        unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
+
+# Shared plugin snippets -------------------------------------------------------
+# (APISIX standalone has no anchors; repeat explicit blocks per route.)
+
+global_rules:
+  - id: 1
+    plugins:
+      prometheus:
+        prefer_name: true
+      opentelemetry:
+        sampler:
+          name: trace_id_ratio
+          options:
+            fraction: 1.0    # dev: sample everything; lower in prod
+        additional_attributes:
+          - deployment=opendesk-dev
+
+routes:
+  # ---- Service APIs: JWT (HS256 dev) + redis-backed rate limiting + CORS ----
+  - id: api-identity
+    uris:
+      - /api/identity/*
+      - /api/identity
+    methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+    upstream_id: identity
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/identity/?(.*)"
+          - "/$1"
+      openid-connect:
+        discovery: http://keycloak:8080/realms/opendesk/.well-known/openid-configuration
+        bearer_only: true
+        realm: opendesk
+        client_id: admin-web
+        use_pkce: true
+      limit-count:
+        count: 600
+        time_window: 60
+        rejected_code: 429
+        key: remote_addr
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
+  # Public (anonymous) booking endpoints — no auth, tenant-safe by construction.
+  - id: api-bookings-public
+    uris:
+      - /api/bookings/public/*
+    methods: [GET, POST, OPTIONS]
+    upstream_id: booking
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/bookings/(.*)"
+          - "/$1"
+      limit-count:
+        count: 120
+        time_window: 60
+        rejected_code: 429
+        key: remote_addr
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
+  - id: api-bookings
+    uris:
+      - /api/bookings/*
+      - /api/bookings
+    methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+    upstream_id: booking
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/bookings/?(.*)"
+          - "/$1"
+      openid-connect:
+        discovery: http://keycloak:8080/realms/opendesk/.well-known/openid-configuration
+        bearer_only: true
+        realm: opendesk
+        client_id: admin-web
+        use_pkce: true
+      limit-count:
+        count: 600
+        time_window: 60
+        rejected_code: 429
+        key: remote_addr
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
+  - id: api-payments
+    uris:
+      - /api/payments/*
+      - /api/payments
+    methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+    upstream_id: payments
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/payments/?(.*)"
+          - "/$1"
+      openid-connect:
+        discovery: http://keycloak:8080/realms/opendesk/.well-known/openid-configuration
+        bearer_only: true
+        realm: opendesk
+        client_id: admin-web
+        use_pkce: true
+      limit-count:
+        count: 300
+        time_window: 60
+        rejected_code: 429
+        key: remote_addr
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
+  - id: api-knowledge
+    uris:
+      - /api/knowledge/*
+      - /api/knowledge
+    methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+    upstream_id: knowledge
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/knowledge/?(.*)"
+          - "/$1"
+      openid-connect:
+        discovery: http://keycloak:8080/realms/opendesk/.well-known/openid-configuration
+        bearer_only: true
+        realm: opendesk
+        client_id: admin-web
+        use_pkce: true
+      limit-count:
+        count: 600
+        time_window: 60
+        rejected_code: 429
+        key: remote_addr
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
+  - id: api-conversations
+    uris:
+      - /api/conversations/*
+      - /api/conversations
+    methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+    upstream_id: conversation
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/conversations/?(.*)"
+          - "/$1"
+      openid-connect:
+        discovery: http://keycloak:8080/realms/opendesk/.well-known/openid-configuration
+        bearer_only: true
+        realm: opendesk
+        client_id: admin-web
+        use_pkce: true
+      limit-count:
+        count: 600
+        time_window: 60
+        rejected_code: 429
+        key: remote_addr
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
+  # ---- Twenty CRM (SPEC-CRM §A): /crm/* -> twenty-api, bearer_only OIDC ----
+  - id: crm-twenty
+    uris:
+      - /crm/*
+      - /crm
+    methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+    upstream_id: twenty-api
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/crm/?(.*)"
+          - "/$1"
+      openid-connect:
+        discovery: http://keycloak:8080/realms/opendesk/.well-known/openid-configuration
+        bearer_only: true
+        realm: opendesk
+        client_id: admin-web
+        use_pkce: true
+      limit-count:
+        count: 600
+        time_window: 60
+        rejected_code: 429
+        key: remote_addr
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
+  # ---- Realtime: WebSocket fan-out (gateway-edge) ----
+  # SECURITY (SPEC-W3 §2): /ws keeps in-app JWT (validated by gateway-edge
+  # against the Keycloak JWKS) instead of the gateway openid-connect plugin.
+  # Why: (1) browsers cannot set Authorization headers on WebSocket upgrades,
+  # so the token rides as a ?token= query param / subprotocol that the edge
+  # service verifies itself; (2) the edge multiplexes tenant-scoped channels
+  # (/ws, /ws/intel) and must bind the connection to the JWT's tenant claims
+  # before subscribing — a claim-aware check the generic plugin cannot do.
+  - id: ws-gateway
+    uris:
+      - /ws/*
+      - /ws
+    upstream_id: edge
+    enable_websocket: true
+    plugins:
+      limit-count:
+        count: 120
+        time_window: 60
+        rejected_code: 429
+        key: remote_addr
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
+  # ---- Voice runtime ingress (public chat/session + LiveKit webhooks) ----
+  # SECURITY (SPEC-W3 §2): /voice/chat + /voice/session stay PUBLIC because
+  # anonymous website visitors use them (no Keycloak account), so they cannot
+  # get openid-connect bearer_only like /api/*. Instead they get a STRICTER
+  # limit-count (30 req/min per IP vs 120 before) keyed on remote_addr.
+  # TODO(prod): add a bot-gate (Cloudflare Turnstile token verified by the
+  # voice runtime) in front of /voice/chat — rate limiting alone does not
+  # stop credential-free LLM cost abuse. LiveKit webhook/SIP paths under
+  # /voice/* are server-to-server and authenticate via LiveKit signatures.
+  - id: voice-runtime
+    uris:
+      - /voice/*
+      - /voice
+    upstream_id: voice
+    enable_websocket: true
+    plugins:
+      limit-count:
+        count: 30
+        time_window: 60
+        rejected_code: 429
+        key: remote_addr
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
+  # ---- Plan-tier rate limiting EXAMPLE (SPEC-W3 §2) ----
+  # Pattern for tiered quotas: limit-count keyed on the X-Tenant-Plan header
+  # (http_x_tenant_plan), which identity-aware services echo from the
+  # tenant's plan. APISIX limit-count keeps ONE counter per distinct key
+  # value, so each plan gets its own bucket. Plan map (per-tenant, per-min):
+  #   free = 60   |   pro = 600   |   (absent header = "anonymous" bucket: 60)
+  # Deploy by cloning this block per plan with a `vars` match, e.g.:
+  #   free: vars: [["http_x_tenant_plan","==","free"]]  + count: 60
+  #   pro:  vars: [["http_x_tenant_plan","==","pro"]]   + count: 600
+  # This route is DISABLED (status: 0) — it documents the pattern; enable it
+  # on the plan-gated surface (e.g. /api/knowledge/*) when billing launches.
+  - id: api-plan-tier-example
+    uris:
+      - /api/knowledge/*
+    methods: [GET, POST, OPTIONS]
+    upstream_id: knowledge
+    status: 0
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/knowledge/?(.*)"
+          - "/$1"
+      limit-count:
+        # One counter per X-Tenant-Plan value; clone with vars for the
+        # free=60 / pro=600 split documented above.
+        count: 60
+        time_window: 60
+        rejected_code: 429
+        key: http_x_tenant_plan
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
+  # ---- Browser app (catch-all): OIDC Authorization Code + PKCE against Keycloak ----
+  - id: admin-web
+    uri: /*
+    upstream_id: web
+    plugins:
+      openid-connect:
+        discovery: http://keycloak:8080/realms/opendesk/.well-known/openid-configuration
+        client_id: admin-web
+        # `admin-web` is a PUBLIC Keycloak client (SPEC §8): no client secret, PKCE instead.
+        use_pkce: true
+        scope: openid profile email
+        bearer_only: false
+        realm: opendesk
+        # Must differ from the route path itself (see APISIX openid-connect docs,
+        # "Misconfigured Redirection URI"). The Keycloak `admin-web` client must allow
+        # redirect URIs matching http://localhost:9080/* (dev) so /auth/callback is valid.
+        redirect_uri: /auth/callback
+        logout_path: /logout
+        post_logout_redirect_uri: /
+        set_access_token_header: true
+        set_id_token_header: true
+        set_userinfo_header: true
+        access_token_in_authorization_header: false
+        session:
+          # Dev-only fixed session secret (32+ chars); rotate via secret store in prod.
+          secret: opendesk-dev-session-secret-0123456789abcdef
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
+#END
