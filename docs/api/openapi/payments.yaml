@@ -1,0 +1,522 @@
+openapi: 3.0.3
+info:
+  title: OpenDesk payments-service API
+  version: "1.0.0"
+  description: |
+    REST API of `payments-service` (Rust, axum) — deposit holds, captures,
+    refunds, no-show fees, balances and Mojaloop payouts over a double-entry
+    ledger, plus Temporal saga activity callbacks (SPEC §6, §9).
+
+    Generated from `services/payments-service/src/routes.rs` (+ `ledger/`,
+    `mojaloop.rs` for types).
+
+    ## Ledger
+    * Implementation selected by env `LEDGER_IMPL=sim|tigerbeetle` (default
+      `sim` in dev — see ADR-0007). The REST contract is identical.
+    * Transfer codes (SPEC §9): `100` deposit hold (pending), `101` capture,
+      `102` refund, `103` no-show fee, `104` payout.
+    * Holds are two-phase: a hold creates a `pending` transfer; capture posts
+      it (split into revenue + platform fee), refund/void releases it.
+    * All mutations are idempotent: transfer ids are derived from the
+      caller's `idempotency_key` (or deterministic fallbacks such as
+      `hold:{booking_id}`, `capture:{deposit_id}`), so retries return the
+      original transfer instead of double-posting.
+    * Events (`DepositHeld`, `DepositCaptured`, `RefundPosted`,
+      `NoShowFeePosted`, `PayoutPosted`, `HoldVoided`) are published as
+      CloudEvents on Kafka `opendesk.payments.events` via Dapr pubsub.
+
+    ## Errors
+    `{"error": "<message>"}` with status mapping: 400 invalid input,
+    404 account/transfer not found, 409 duplicate id / already resolved /
+    not pending, 422 amount exceeds pending or overdraft, 502 ledger or
+    Mojaloop backend error.
+
+servers:
+  - url: http://localhost:7004
+    description: direct service (dev)
+  - url: http://localhost:9080/api/payments
+    description: via APISIX gateway
+
+tags:
+  - name: meta
+  - name: deposits
+  - name: refunds
+  - name: accounts
+  - name: payouts
+  - name: activities
+
+paths:
+  /healthz:
+    get:
+      tags: [meta]
+      summary: Liveness probe
+      operationId: healthz
+      responses:
+        "200":
+          description: Service up; reports the active ledger implementation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  service: { type: string, example: payments-service }
+                  ledger_impl:
+                    type: string
+                    enum: [sim, tigerbeetle]
+
+  /v1/deposits:
+    post:
+      tags: [deposits]
+      summary: Hold a deposit (transfer code 100, pending)
+      description: |
+        Creates a pending hold from the tenant `deposits` account.
+        Idempotency: explicit `idempotency_key`, else `hold:{booking_id}`
+        when `booking_id` is present.
+      operationId: holdDeposit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HoldDepositBody" }
+      responses:
+        "201":
+          description: Held deposit
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DepositResponse" }
+        "400":
+          description: amount_cents must be > 0
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Idempotency conflict / already resolved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: Overdraft or invalid amount
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/deposits/{id}/capture:
+    post:
+      tags: [deposits]
+      summary: Capture a held deposit (code 101)
+      description: |
+        Posts the pending hold (fully, or partially when `amount_cents` is
+        given) and splits the captured amount into tenant revenue and the
+        platform fee account. Capture transfer id is deterministic
+        (`capture:{deposit_id}`), so retries are idempotent.
+      operationId: captureDeposit
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Deposit (pending transfer) id
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CaptureBody" }
+      responses:
+        "200":
+          description: Capture result (posting transfer + revenue/fee split)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CaptureResponse" }
+        "404":
+          description: Deposit not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Hold already resolved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: Amount exceeds pending hold
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/refunds:
+    post:
+      tags: [refunds]
+      summary: Refund a deposit (code 102)
+      description: |
+        Refunds a held/captured deposit. `amount_cents` of `0` (the default)
+        refunds/voids the full remaining amount. Idempotency: explicit
+        `idempotency_key`, else `refund:{deposit_id}:{amount_cents}`.
+      operationId: refund
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefundBody" }
+      responses:
+        "201":
+          description: Refund transfer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transfer" }
+        "404":
+          description: Deposit not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: Amount exceeds available funds
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/no-show-fee:
+    post:
+      tags: [deposits]
+      summary: Charge a no-show fee against a deposit (code 103)
+      description: Captures `amount_cents` from the pending deposit hold as a
+        fee. Transfer id is deterministic (`no-show-fee:{deposit_id}`).
+      operationId: noShowFee
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NoShowFeeBody" }
+      responses:
+        "201":
+          description: Fee capture result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CaptureResult" }
+        "400":
+          description: amount_cents must be > 0
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: Fee exceeds pending hold
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/accounts/{tenant_id}/balance:
+    get:
+      tags: [accounts]
+      summary: Tenant ledger balances
+      description: Posted and pending debits/credits for all tenant accounts
+        (`tenant:{id}:deposits`, `tenant:{id}:revenue`, …).
+      operationId: balance
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Balances per account
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantBalance" }
+        "404":
+          description: No accounts for tenant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/payouts:
+    post:
+      tags: [payouts]
+      summary: Cross-border payout of tenant earnings (code 104 + Mojaloop)
+      description: |
+        Executes a payout in two steps: (1) the Mojaloop rail
+        (`POST /quotes` then `POST /transfers` against
+        `MOJALOOP_ENDPOINT`, default `http://mojaloop:8444`) — if the rail
+        rejects, no ledger movement happens; (2) the ledger payout transfer
+        from tenant revenue to `platform:payouts`. The payout id derives
+        from `idempotency_key`, making end-to-end retries idempotent.
+        If step 2 fails after the rail committed, the service logs CRITICAL
+        and the case requires operator reconciliation (see
+        `docs/runbooks/operations.md`).
+      operationId: payout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PayoutBody" }
+      responses:
+        "201":
+          description: Payout executed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PayoutResponse" }
+        "400":
+          description: amount_cents must be > 0
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: Insufficient revenue balance
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: Mojaloop rail failure (no ledger movement)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /activities/hold-deposit:
+    post:
+      tags: [activities]
+      summary: Saga activity — hold deposit (BookingSagaWorkflow HoldDeposit)
+      description: |
+        Invoked by the Temporal saga via Dapr service invocation. Transfer id
+        is deterministic per booking (`saga-hold:{booking_id}`), so saga
+        retries are idempotent.
+      operationId: activityHoldDeposit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HoldDepositActivityBody" }
+      responses:
+        "201":
+          description: Held deposit
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DepositResponse" }
+        "400":
+          description: amount_cents must be > 0
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /activities/void-hold:
+    post:
+      tags: [activities]
+      summary: Saga compensation — void a deposit hold (VoidHold)
+      description: |
+        Invoked by the Temporal saga via Dapr service invocation. Voids the
+        pending hold (full-amount refund against the pending transfer).
+        Provide `deposit_id` or `booking_id` (the deposit id is then derived
+        as `saga-hold:{booking_id}`). Transfer id is deterministic
+        (`saga-void:{deposit_id}`).
+      operationId: activityVoidHold
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VoidHoldActivityBody" }
+      responses:
+        "200":
+          description: Voiding transfer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transfer" }
+        "400":
+          description: Neither deposit_id nor booking_id given
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+components:
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+
+    Transfer:
+      type: object
+      description: Double-entry transfer. `id`/`pending_id` are u128 values;
+        API-level ids (e.g. `deposit_id`) are the same value rendered as a
+        32-char hex string.
+      properties:
+        id:
+          description: u128 transfer id (JSON number; hex string elsewhere)
+          oneOf:
+            - { type: integer }
+            - { type: string }
+        debit_account: { type: string, example: "tenant:acme:deposits" }
+        credit_account: { type: string, example: "tenant:acme:revenue" }
+        amount: { type: integer, format: int64, description: minor units (cents) }
+        ledger: { type: integer, format: int32 }
+        code:
+          type: integer
+          description: 100 hold, 101 capture, 102 refund, 103 no-show fee, 104 payout
+          enum: [100, 101, 102, 103, 104]
+        state: { $ref: "#/components/schemas/TransferState" }
+        flag: { $ref: "#/components/schemas/TransferFlag" }
+        pending_id:
+          description: u128 id of the pending transfer this resolves
+          oneOf:
+            - { type: integer }
+            - { type: string }
+        created_at: { type: string, format: date-time }
+
+    TransferState:
+      type: string
+      enum: [pending, posted, voided]
+
+    TransferFlag:
+      type: string
+      enum: [none, post_pending, void_pending]
+
+    CaptureResult:
+      type: object
+      properties:
+        post:
+          $ref: "#/components/schemas/Transfer"
+          description: Transfer that posted the pending hold
+        revenue:
+          $ref: "#/components/schemas/Transfer"
+          description: Tenant revenue share of the captured amount
+        platform_fee:
+          $ref: "#/components/schemas/Transfer"
+          description: Platform fee share (absent when fee is zero)
+
+    AccountBalance:
+      type: object
+      properties:
+        account: { type: string, example: "tenant:acme:deposits" }
+        id: { type: string, description: Account id }
+        debits_pending: { type: integer, format: int64 }
+        credits_pending: { type: integer, format: int64 }
+        debits_posted: { type: integer, format: int64 }
+        credits_posted: { type: integer, format: int64 }
+        posted_net:
+          type: integer
+          description: credits_posted − debits_posted (value held for tenant)
+        pending_net:
+          type: integer
+          description: credits_pending − debits_pending
+
+    TenantBalance:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        accounts:
+          type: array
+          items: { $ref: "#/components/schemas/AccountBalance" }
+
+    PartyIdInfo:
+      type: object
+      required: [party_id_type, party_identifier]
+      properties:
+        party_id_type:
+          type: string
+          example: MSISDN
+          description: FSPIOP party id type (MSISDN, ALIAS, IBAN, …)
+        party_identifier: { type: string, example: "+441234567890" }
+
+    Money:
+      type: object
+      properties:
+        currency: { type: string, example: USD }
+        amount: { type: string, example: "125.00" }
+
+    PayoutOutcome:
+      type: object
+      description: Mojaloop rail result (camelCase JSON)
+      properties:
+        quoteId: { type: string }
+        transferId: { type: string }
+        state: { type: string, example: COMMITTED }
+        completedAt: { type: string, format: date-time }
+        amount: { $ref: "#/components/schemas/Money" }
+
+    HoldDepositBody:
+      type: object
+      required: [tenant_id, amount_cents]
+      properties:
+        tenant_id: { type: string }
+        booking_id: { type: string }
+        amount_cents: { type: integer, format: int64, minimum: 1 }
+        currency: { type: string }
+        idempotency_key: { type: string }
+
+    DepositResponse:
+      type: object
+      properties:
+        deposit_id: { type: string, description: 32-char hex transfer id }
+        state: { $ref: "#/components/schemas/TransferState" }
+        amount_cents: { type: integer, format: int64 }
+        transfer: { $ref: "#/components/schemas/Transfer" }
+
+    CaptureBody:
+      type: object
+      required: [tenant_id]
+      properties:
+        tenant_id: { type: string }
+        amount_cents:
+          type: integer
+          format: int64
+          description: Partial capture amount; omit to capture the full hold
+
+    CaptureResponse:
+      type: object
+      properties:
+        deposit_id: { type: string }
+        result: { $ref: "#/components/schemas/CaptureResult" }
+
+    RefundBody:
+      type: object
+      required: [tenant_id]
+      properties:
+        tenant_id: { type: string }
+        deposit_id: { type: string, format: uuid }
+        amount_cents:
+          type: integer
+          format: int64
+          default: 0
+          description: 0 = full remaining amount
+        reason: { type: string }
+        idempotency_key: { type: string }
+
+    NoShowFeeBody:
+      type: object
+      required: [tenant_id, deposit_id, amount_cents]
+      properties:
+        tenant_id: { type: string }
+        deposit_id: { type: string, format: uuid }
+        amount_cents: { type: integer, format: int64, minimum: 1 }
+        booking_id: { type: string }
+
+    PayoutBody:
+      type: object
+      required: [tenant_id, amount_cents, currency, payee]
+      properties:
+        tenant_id: { type: string }
+        amount_cents: { type: integer, format: int64, minimum: 1 }
+        currency: { type: string, example: USD }
+        payee: { $ref: "#/components/schemas/PartyIdInfo" }
+        idempotency_key: { type: string }
+
+    PayoutResponse:
+      type: object
+      properties:
+        payout_id: { type: string }
+        ledger_transfer: { $ref: "#/components/schemas/Transfer" }
+        mojaloop: { $ref: "#/components/schemas/PayoutOutcome" }
+
+    HoldDepositActivityBody:
+      type: object
+      required: [tenant_id, booking_id, amount_cents]
+      properties:
+        tenant_id: { type: string }
+        booking_id: { type: string }
+        amount_cents: { type: integer, format: int64, minimum: 1 }
+        currency: { type: string }
+
+    VoidHoldActivityBody:
+      type: object
+      required: [tenant_id]
+      properties:
+        tenant_id: { type: string }
+        deposit_id: { type: string, format: uuid }
+        booking_id: { type: string }

@@ -1,0 +1,324 @@
+openapi: 3.0.3
+info:
+  title: OpenDesk identity-service API
+  version: "1.0.0"
+  description: |
+    REST API of `identity-service` (Go, chi) — tenant provisioning and
+    membership management, backed by Postgres (`identity` DB), Keycloak
+    (realm `opendesk`, groups `/tenants/{slug}`) and Permify
+    (`organization:{tenant_id}` relationships).
+
+    Generated from `services/identity-service/internal/httpapi/server.go`.
+
+    * Provisioning side effects are durable: Keycloak group / Permify tenant
+      creation is attempted inline and retried by `TenantOnboardingWorkflow`
+      (SPEC §6) via the idempotent `/internal/tenants/{slug}/ensure-*`
+      endpoints.
+    * Domain events are published as CloudEvents on Kafka topic
+      `opendesk.identity.events` via Dapr pubsub (`TenantProvisioned`,
+      `MemberInvited`).
+    * Errors are `{"error": "<message>"}`.
+
+servers:
+  - url: http://localhost:7001
+    description: direct service (dev)
+  - url: http://localhost:9080/api/identity
+    description: via APISIX gateway
+
+tags:
+  - name: meta
+  - name: tenants
+  - name: members
+  - name: internal
+
+paths:
+  /healthz:
+    get:
+      tags: [meta]
+      summary: Liveness/readiness probe
+      operationId: healthz
+      responses:
+        "200":
+          description: Service healthy (Postgres reachable)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+        "503":
+          description: Database unreachable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/tenants:
+    post:
+      tags: [tenants]
+      summary: Provision a tenant
+      description: |
+        Creates the tenant row, the Keycloak group `/tenants/{slug}`, the
+        Permify tenant plus the owner relationship (when `owner_user_id` is
+        given), and publishes `TenantProvisioned`. Slug must match
+        `^[a-z0-9][a-z0-9-]{1,62}$`. Defaults: timezone `UTC`, currency
+        `USD`, locale `en-US`, plan `free`, terminology `{}`.
+      operationId: createTenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTenantRequest" }
+      responses:
+        "201":
+          description: Created tenant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tenant" }
+        "400":
+          description: Invalid slug/name
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Slug already taken
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/tenants/{slug}:
+    get:
+      tags: [tenants]
+      summary: Get the public tenant context
+      description: |
+        Returns the tenant display context used for agent session injection
+        and the public booking page. Note: the response deliberately omits
+        `created_at` (see handler).
+      operationId: getTenant
+      parameters:
+        - $ref: "#/components/parameters/Slug"
+      responses:
+        "200":
+          description: Tenant context
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantContext" }
+        "404":
+          description: Tenant not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/tenants/{slug}/members:
+    get:
+      tags: [members]
+      summary: List memberships of the tenant
+      operationId: listMembers
+      parameters:
+        - $ref: "#/components/parameters/Slug"
+      responses:
+        "200":
+          description: Membership list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items: { $ref: "#/components/schemas/Membership" }
+        "404":
+          description: Tenant not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      tags: [members]
+      summary: Invite a member
+      description: |
+        Creates the Keycloak user (in group `/tenants/{slug}`), adds the
+        membership row, writes the Permify relationship
+        (`staff` maps to Permify relation `member`) and publishes
+        `MemberInvited`. Role defaults to `staff`.
+      operationId: inviteMember
+      parameters:
+        - $ref: "#/components/parameters/Slug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InviteMemberRequest" }
+      responses:
+        "201":
+          description: Member created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id: { type: string, example: "9b3d0e2a-1c4f-4a5b-8c6d-7e8f9a0b1c2d" }
+                  role: { type: string, example: staff }
+        "400":
+          description: Missing email or invalid role
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: Identity provider (Keycloak) error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /internal/tenants/{slug}/ensure-group:
+    post:
+      tags: [internal]
+      summary: Idempotently create the Keycloak tenant group
+      description: Service-to-service endpoint used by
+        `TenantOnboardingWorkflow` via Dapr service invocation.
+      operationId: ensureGroup
+      parameters:
+        - $ref: "#/components/parameters/Slug"
+      responses:
+        "200":
+          description: Group ensured
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  group_id: { type: string }
+        "404":
+          description: Tenant not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: Keycloak error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /internal/tenants/{slug}/ensure-permify:
+    post:
+      tags: [internal]
+      summary: Idempotently create the Permify tenant
+      description: Service-to-service endpoint used by
+        `TenantOnboardingWorkflow` via Dapr service invocation.
+      operationId: ensurePermify
+      parameters:
+        - $ref: "#/components/parameters/Slug"
+      responses:
+        "200":
+          description: Permify tenant ensured
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  permify_tenant: { type: string, format: uuid }
+        "404":
+          description: Tenant not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: Permify error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+components:
+  parameters:
+    Slug:
+      name: slug
+      in: path
+      required: true
+      description: Tenant slug (`acme`)
+      schema:
+        type: string
+        pattern: "^[a-z0-9][a-z0-9-]{1,62}$"
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+
+    Tenant:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string, example: acme }
+        name: { type: string, example: Acme Studio }
+        timezone: { type: string, example: Europe/London }
+        currency: { type: string, example: GBP }
+        locale: { type: string, example: en-GB }
+        terminology:
+          type: object
+          additionalProperties: true
+          description: 'Per-tenant term overrides, e.g. {"booking": "appointment"}'
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+        created_at: { type: string, format: date-time }
+
+    TenantContext:
+      type: object
+      description: Public context returned by GET /v1/tenants/{slug}
+        (no `created_at`).
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        timezone: { type: string }
+        currency: { type: string }
+        locale: { type: string }
+        terminology:
+          type: object
+          additionalProperties: true
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+
+    CreateTenantRequest:
+      type: object
+      required: [slug, name]
+      properties:
+        slug:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{1,62}$"
+        name: { type: string }
+        timezone: { type: string, default: UTC }
+        currency: { type: string, default: USD }
+        locale: { type: string, default: en-US }
+        terminology:
+          type: object
+          additionalProperties: true
+          default: {}
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+          default: free
+        owner_user_id:
+          type: string
+          description: Keycloak user id granted Permify `owner` on the tenant
+
+    Membership:
+      type: object
+      properties:
+        tenant_id: { type: string, format: uuid }
+        user_id: { type: string, description: Keycloak user id }
+        role:
+          type: string
+          enum: [owner, admin, staff, viewer]
+
+    InviteMemberRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+        first_name: { type: string }
+        last_name: { type: string }
+        role:
+          type: string
+          enum: [owner, admin, staff, viewer]
+          default: staff
