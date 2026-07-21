@@ -1,0 +1,22 @@
+# Fluvio kafka-sink connector: opendesk.transcripts-raw (Fluvio)
+#   -> opendesk.conversation.transcripts (Kafka), with the pii-redact
+#   smartmodule applied inline (phones/emails redacted before records leave
+#   the Fluvio side — the Kafka/OpenSearch/lakehouse sinks only ever see
+#   clean transcripts).
+#
+# Deploy: infra/fluvio/deploy.sh (or `cdk deploy start -c kafka-sink-connector.yaml`).
+apiVersion: 0.2.0
+meta:
+  version: 0.1.0
+  name: transcripts-kafka-sink
+  type: kafka-sink
+  topic: opendesk.transcripts-raw
+
+kafka:
+  # In-cluster dev Kafka (compose service DNS). For a real cluster, move
+  # these to connector secrets (cdk deploy --secrets).
+  url: kafka:9092
+  topic: opendesk.conversation.transcripts
+
+transforms:
+  - uses: opendesk/pii-redact@0.1.0

@@ -1,0 +1,155 @@
+# OpenDesk observability profile (SPEC-W3 §1).
+# Included by the root docker-compose.yml (`include:`), so the `opendesk`
+# network and project name come from there. Everything joins the same
+# network and scrapes/consumes over service DNS names.
+#
+#   prometheus  :9090  — scrapes all 10 app services' /metrics + APISIX
+#   grafana     :3002  — provisioned datasources (prometheus + loki) + dashboards
+#   otel-collector :4318 (OTLP/HTTP) — receives traces (APISIX opentelemetry
+#                        plugin points here) and re-exports logging+prometheus
+#   loki        :3110  — log storage; promtail tails docker container logs
+#   promtail           — scrapes /var/lib/docker/containers via docker socket
+#   backup + ofelia    — scheduled backups (see infra/backups/README.md)
+name: opendesk-observability
+
+networks:
+  opendesk: null
+
+volumes:
+  prometheus-data: null
+  grafana-data: null
+  loki-data: null
+  backups: null
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.1
+    container_name: opendesk-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [opendesk]
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: opendesk-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-opendesk}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    ports:
+      - "3002:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [opendesk]
+
+  otel-collector:
+    image: otel/opentelemetry-collector:0.104.0
+    container_name: opendesk-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    # 4318 = OTLP/HTTP (APISIX opentelemetry plugin + app OTLP exporters).
+    # 8889 = prometheus exporter, scraped by the prometheus service above.
+    ports:
+      - "4318:4318"
+      - "8889:8889"
+    volumes:
+      - ./observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:13133/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [opendesk]
+
+  loki:
+    image: grafana/loki:3.1.0
+    container_name: opendesk-loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki-config.yaml"]
+    # Host port 3110 -> container 3100 (keeps dev laptops' 3100 free).
+    ports:
+      - "3110:3100"
+    volumes:
+      - ./observability/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki-data:/loki
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    networks: [opendesk]
+
+  promtail:
+    image: grafana/promtail:3.1.0
+    container_name: opendesk-promtail
+    restart: unless-stopped
+    command: ["-config.file=/etc/promtail/promtail-config.yaml"]
+    volumes:
+      - ./observability/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      # Docker json-file logs + container metadata for label discovery.
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      loki:
+        condition: service_started
+    networks: [opendesk]
+
+  # ---------------- Scheduled backups (infra/backups/README.md) ------------
+  # Long-running container with the docker CLI + the repo mounted; ofelia
+  # triggers backup.sh inside it on a cron schedule.
+  backup:
+    image: docker:27-cli
+    container_name: opendesk-backup
+    restart: unless-stopped
+    command: ["sh", "-c", "sleep infinity"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../:/repo:ro
+      - backups:/backups
+    labels:
+      ofelia.enabled: "true"
+      # Daily at 03:17 container-local time; override by editing here.
+      ofelia.job-exec.backup.schedule: "17 3 * * *"
+      ofelia.job-exec.backup.command: "env BACKUP_DOCKER_VOLUME=opendesk_backups sh /repo/infra/backups/backup.sh /backups"
+      ofelia.job-exec.backup.no-overlap: "true"
+    networks: [opendesk]
+
+  ofelia:
+    image: mcuadros/ofelia:v0.14.1
+    container_name: opendesk-ofelia
+    restart: unless-stopped
+    command: ["daemon", "--docker"]
+    depends_on:
+      backup:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [opendesk]

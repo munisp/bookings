@@ -1,0 +1,20 @@
+[package]
+name = "pii-redact"
+version = "0.1.0"
+edition = "2021"
+description = "Fluvio smart module: redact phone numbers and emails from OpenDesk transcript records (SPEC §5)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# fluvio-smartmodule is the current name of the former `smartmodule-sdk` crate.
+fluvio-smartmodule = { version = "0.6", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+
+[profile.release]
+lto = true
+opt-level = "z"
+strip = true
