@@ -1,0 +1,195 @@
+name: opendesk-lakehouse
+networks:
+  opendesk: null
+volumes:
+  minio-data: null
+  spark-ivy: null
+services:
+  minio:
+    image: minio/minio:RELEASE.2024-07-16T23-46-41Z
+    container_name: opendesk-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_DOMAIN: minio
+    ports:
+    - 9000:9000/tcp
+    - 9001:9001/tcp
+    volumes:
+    - minio-data:/data
+    networks:
+    - opendesk
+    healthcheck:
+      test:
+      - CMD
+      - mc
+      - ready
+      - local
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+    restart: unless-stopped
+  # Bucket init: `lake` is the Iceberg/lakehouse warehouse; `exports` holds
+  # GDPR data-subject export bundles written by notification-worker's
+  # GdprExportWorkflow (plain S3 PUT, SPEC-W3 §2 innovation 13).
+  createbucket:
+    image: minio/mc:RELEASE.2024-07-11T18-01-46Z
+    container_name: opendesk-minio-createbucket
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - 'mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+
+      mc mb --ignore-existing local/lake
+
+      mc mb --ignore-existing local/exports
+
+      mc anonymous set none local/lake
+
+      mc anonymous set none local/exports
+
+      mc ls local
+
+      '
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    networks:
+    - opendesk
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: 'no'
+  iceberg-catalog-init:
+    image: postgres:16-alpine
+    container_name: opendesk-iceberg-catalog-init
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - "until pg_isready -h postgres -p 5432 -U \"$${POSTGRES_USER}\"; do sleep 2; done\npsql \"postgresql://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@postgres:5432/postgres\"\
+      \ \\\n  -c \"CREATE DATABASE iceberg\" || echo \"database iceberg already exists\"
+"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-opendesk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-opendesk}
+    networks:
+    - opendesk
+    restart: 'no'
+  iceberg-rest:
+    image: apache/iceberg-rest-fixture:latest
+    container_name: opendesk-iceberg-rest
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_REGION: us-east-1
+      CATALOG_WAREHOUSE: s3://lake/warehouse
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: 'true'
+      CATALOG_S3_ACCESS__KEY__ID: minioadmin
+      CATALOG_S3_SECRET__ACCESS__KEY: minioadmin
+      CATALOG_CATALOG__IMPL: org.apache.iceberg.jdbc.JdbcCatalog
+      CATALOG_URI: jdbc:postgresql://postgres:5432/iceberg
+      CATALOG_JDBC_USER: ${POSTGRES_USER:-opendesk}
+      CATALOG_JDBC_PASSWORD: ${POSTGRES_PASSWORD:-opendesk}
+      CATALOG_JDBC_STRICT__MODE: 'true'
+      REST_PORT: '8181'
+    ports:
+    - 8181:8181/tcp
+    networks:
+    - opendesk
+    depends_on:
+      createbucket:
+        condition: service_completed_successfully
+      iceberg-catalog-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl -fsS http://127.0.0.1:8181/v1/config >/dev/null 2>&1 || wget -qO /dev/null http://127.0.0.1:8181/v1/config ||
+        (exec 3<>/dev/tcp/127.0.0.1/8181)
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+  trino:
+    image: trinodb/trino:448
+    container_name: opendesk-trino
+    ports:
+    - 8088:8080/tcp
+    volumes:
+    - ./lakehouse/trino/catalog:/etc/trino/catalog:ro
+    networks:
+    - opendesk
+    depends_on:
+      iceberg-rest:
+        condition: service_started
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl -fsS http://127.0.0.1:8080/v1/info | grep -q '"starting":false'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+  spark-master:
+    image: bitnami/spark:3.5
+    container_name: opendesk-spark-master
+    environment:
+      SPARK_MODE: master
+      SPARK_RPC_AUTHENTICATION_ENABLED: 'no'
+      SPARK_RPC_ENCRYPTION_ENABLED: 'no'
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: 'no'
+      SPARK_SSL_ENABLED: 'no'
+    ports:
+    - 7077:7077/tcp
+    - 8081:8080/tcp
+    volumes:
+    - ./lakehouse/spark/jobs:/opt/spark-jobs:ro
+    - spark-ivy:/opt/bitnami/spark/.ivy2
+    networks:
+    - opendesk
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl -fsS http://127.0.0.1:8080 >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+  spark-worker:
+    image: bitnami/spark:3.5
+    container_name: opendesk-spark-worker-1
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: 1G
+      SPARK_WORKER_CORES: '1'
+      SPARK_RPC_AUTHENTICATION_ENABLED: 'no'
+      SPARK_RPC_ENCRYPTION_ENABLED: 'no'
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: 'no'
+      SPARK_SSL_ENABLED: 'no'
+    volumes:
+    - ./lakehouse/spark/jobs:/opt/spark-jobs:ro
+    - spark-ivy:/opt/bitnami/spark/.ivy2
+    networks:
+    - opendesk
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl -fsS http://127.0.0.1:8081 >/dev/null || pgrep -f 'worker.Worker' >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped

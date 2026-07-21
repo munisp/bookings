@@ -1,0 +1,34 @@
+# Kafka pub/sub for OpenDesk (SPEC §4). Broker kafka:9092, no auth in dev.
+# Consumer group is set per app at runtime via the subscriber's consumerID /
+# Dapr app settings — the component itself is shared.
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: pubsub-kafka
+spec:
+  type: pubsub.kafka
+  version: v1
+  metadata:
+    - name: brokers
+      value: "kafka:9092"
+    - name: authType
+      value: "none"
+    - name: consumerGroup
+      value: "opendesk-default"   # overridden per app at runtime
+    - name: allowAutoTopicCreation
+      value: "false"              # topics are provisioned by infra/kafka/create-topics.sh
+    - name: disableEntityManagement
+      value: "true"
+    - name: maxMessageBytes
+      value: "1048576"
+scopes:
+  - booking
+  - conversation
+  - notification
+  - payments
+  - identity
+  - analytics
+  - knowledge
+  - edge
+  - voice
+  - crm-sync

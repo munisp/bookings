@@ -1,0 +1,28 @@
+# SMTP output binding for transactional email (booking confirmations, reminders).
+# Used by notification-worker; credentials via env-var placeholders for dev.
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: bindings-smtp
+spec:
+  type: bindings.smtp
+  version: v1
+  metadata:
+    - name: host
+      value: "${SMTP_HOST}"          # e.g. mailpit or smtp.sendgrid.net
+    - name: port
+      value: "${SMTP_PORT}"          # e.g. 1025 (dev) / 587
+    - name: user
+      value: "${SMTP_USER}"
+    - name: password
+      secretKeyRef:
+        name: SMTP_PASSWORD
+        key: SMTP_PASSWORD
+    - name: skipTLSVerify
+      value: "true"                  # dev only
+    - name: emailFrom
+      value: "${SMTP_FROM}"          # e.g. "OpenDesk <no-reply@opendesk.local>"
+auth:
+  secretStore: envvar-secret-store
+scopes:
+  - notification

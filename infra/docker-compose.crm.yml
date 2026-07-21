@@ -1,0 +1,91 @@
+# OpenDesk CRM plane (SPEC-CRM §A): self-hosted Twenty CRM + dedicated Redis.
+# Included by the root docker-compose.yml via `include:`.
+#
+# Image tag note: pinned to twentycrm/twenty:v1.3.2 per SPEC-CRM §A. If that
+# tag is unavailable on Docker Hub, fall back to `twentycrm/twenty:v1.3.1`
+# (confirmed to exist) or `:latest` — see services/crm-sync-service/README.md.
+
+networks:
+  opendesk:
+    driver: bridge
+
+volumes:
+  twenty-local-storage:
+  twenty-redis-data:
+
+x-twenty-env: &twenty-env
+  NODE_PORT: "3000"
+  PG_DATABASE_URL: postgres://opendesk:opendesk@postgres:5432/twenty
+  REDIS_URL: redis://twenty-redis:6379
+  SERVER_URL: ${TWENTY_SERVER_URL:-http://localhost:3100}
+  FRONT_BASE_URL: ${TWENTY_FRONT_BASE_URL:-http://localhost:3100}
+  ACCESS_TOKEN_SECRET: ${TWENTY_ACCESS_TOKEN_SECRET:-opendesk-twenty-access-token-dev}
+  LOGIN_TOKEN_SECRET: ${TWENTY_LOGIN_TOKEN_SECRET:-opendesk-twenty-login-token-dev}
+  REFRESH_TOKEN_SECRET: ${TWENTY_REFRESH_TOKEN_SECRET:-opendesk-twenty-refresh-token-dev}
+  FILE_TOKEN_SECRET: ${TWENTY_FILE_TOKEN_SECRET:-opendesk-twenty-file-token-dev}
+  APP_SECRET: ${TWENTY_APP_SECRET:-opendesk-twenty-app-secret-dev}
+  MESSAGE_QUEUE_TYPE: bull-mq
+  STORAGE_TYPE: local
+  SIGN_IN_PREFILLED: "true"
+
+services:
+
+  # ---------------- Twenty API (SPEC-CRM §A) ----------------
+  twenty-api:
+    image: twentycrm/twenty:v1.3.2
+    container_name: twenty-api
+    restart: unless-stopped
+    environment: *twenty-env
+    ports:
+      - "3100:3000"
+    volumes:
+      - twenty-local-storage:/app/packages/twenty-server/.local-storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      twenty-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/healthz >/dev/null 2>&1 || curl -fsS http://localhost:3000/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+    networks: [opendesk]
+
+  # ---------------- Twenty worker (bull-mq jobs) ----------------
+  twenty-worker:
+    image: twentycrm/twenty:v1.3.2
+    container_name: twenty-worker
+    restart: unless-stopped
+    command: ["yarn", "worker:prod"]
+    environment: *twenty-env
+    volumes:
+      - twenty-local-storage:/app/packages/twenty-server/.local-storage
+    depends_on:
+      twenty-api:
+        condition: service_started
+      twenty-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f worker >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks: [opendesk]
+
+  # ---------------- Dedicated Redis for Twenty's bull-mq queue ----------------
+  twenty-redis:
+    image: redis:7-alpine
+    container_name: twenty-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - twenty-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [opendesk]

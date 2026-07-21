@@ -1,0 +1,175 @@
+name: opendesk-edge
+networks:
+  opendesk: null
+volumes:
+  appsec-config: null
+  appsec-data: null
+  appsec-logs: null
+  opensearch-data: null
+services:
+  apisix-etcd:
+    image: bitnami/etcd:3.5
+    container_name: opendesk-apisix-etcd
+    environment:
+      ALLOW_NONE_AUTHENTICATION: 'yes'
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+      ETCD_ADVERTISE_CLIENT_URLS: http://apisix-etcd:2379
+    networks:
+    - opendesk
+    healthcheck:
+      test:
+      - CMD
+      - etcdctl
+      - endpoint
+      - health
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+  apisix:
+    image: apache/apisix:3.9.0-debian
+    container_name: opendesk-apisix
+    environment:
+      APISIX_STAND_ALONE: 'true'
+    volumes:
+    - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+    - ./apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+    ports:
+    - 9080:9080/tcp
+    - 9180:9180/tcp
+    networks:
+    - opendesk
+    depends_on:
+      apisix-etcd:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl -fsS http://127.0.0.1:9090/v1/healthcheck || curl -fsS http://127.0.0.1:9080/apisix/status
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+  openappsec:
+    image: ghcr.io/openappsec/agent:latest
+    container_name: opendesk-openappsec
+    ipc: shareable
+    command: /cp-nano-agent
+    environment:
+      registered_server: APISIX Server
+      autoPolicyLoad: 'true'
+    volumes:
+    - ./openappsec:/ext/appsec:ro
+    - appsec-config:/etc/cp/conf
+    - appsec-data:/etc/cp/data
+    - appsec-logs:/var/log/nano_agent
+    networks:
+    - opendesk
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pgrep -f cp-nano-agent >/dev/null 2>&1 || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+  apisix-appsec:
+    image: ghcr.io/openappsec/apisix-attachment:latest
+    container_name: opendesk-apisix-appsec
+    profiles:
+    - appsec
+    ipc: service:openappsec
+    environment:
+      APISIX_STAND_ALONE: 'true'
+    volumes:
+    - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+    - ./apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+    ports:
+    - 9080:9080/tcp
+    - 9180:9180/tcp
+    networks:
+    - opendesk
+    depends_on:
+      openappsec:
+        condition: service_started
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl -fsS http://127.0.0.1:9090/v1/healthcheck || curl -fsS http://127.0.0.1:9080/apisix/status
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+  opensearch:
+    image: opensearchproject/opensearch:2.13.0
+    container_name: opendesk-opensearch
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: 'true'
+      DISABLE_INSTALL_DEMO_CONFIG: 'true'
+      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+      bootstrap.memory_lock: 'true'
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+    - 9200:9200/tcp
+    volumes:
+    - opensearch-data:/usr/share/opensearch/data
+    networks:
+    - opendesk
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl -fsS http://127.0.0.1:9200/_cluster/health | grep -E '"status":"(green|yellow)"'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.13.0
+    container_name: opendesk-opensearch-dashboards
+    environment:
+      OPENSEARCH_HOSTS: '["http://opensearch:9200"]'
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: 'true'
+    ports:
+    - 5601:5601/tcp
+    networks:
+    - opendesk
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl -fsS http://127.0.0.1:5601/api/status >/dev/null || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    restart: unless-stopped
+  opensearch-init:
+    image: curlimages/curl:8.7.1
+    container_name: opendesk-opensearch-init
+    entrypoint:
+    - /bin/sh
+    - /work/setup-indices.sh
+    environment:
+      OS_HOST: http://opensearch:9200
+    volumes:
+    - ./opensearch:/work:ro
+    networks:
+    - opendesk
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    restart: 'no'

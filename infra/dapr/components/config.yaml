@@ -1,0 +1,16 @@
+# Dapr control-plane/app configuration for DEV.
+# Tracing and mTLS are both OFF in dev; enable zipkin + mtls in prod overlays.
+apiVersion: dapr.io/v1alpha1
+kind: Configuration
+metadata:
+  name: opendesk-config
+spec:
+  tracing:
+    samplingRate: "0"      # tracing off in dev (zipkin disabled)
+    zipkin:
+      endpointAddress: ""  # no zipkin endpoint in dev
+  mtls:
+    enabled: false         # plaintext between sidecars in dev
+  features:
+    - name: SchedulerReminders
+      enabled: false

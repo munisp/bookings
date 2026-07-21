@@ -1,0 +1,321 @@
+version: "3.9"
+
+# OpenDesk core data plane (SPEC §3 ports, §4 topics, §5 Fluvio, §6 Temporal,
+# §7 Postgres, §8 Permify/Keycloak, §9 TigerBeetle/Mojaloop).
+# Included by the root infra/docker-compose.yml — no profiles here.
+
+networks:
+  opendesk:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  kafka-data:
+  temporal-data:
+  keycloak-data:
+  tigerbeetle-data:
+  permify-data:
+  mojaloop-data:
+  fluvio-data:
+
+services:
+
+  # ---------------- Postgres 16 (SPEC §7) ----------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: opendesk
+      POSTGRES_PASSWORD: opendesk
+      POSTGRES_DB: opendesk
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init-scripts:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opendesk -d opendesk"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [opendesk]
+
+  # ---------------- Redis 7 ----------------
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [opendesk]
+
+  # ---------------- Kafka (KRaft, bitnami, SPEC §4) ----------------
+  kafka:
+    image: bitnami/kafka:3.7
+    container_name: kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_CFG_NODE_ID: "0"
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafka-data:/bitnami/kafka
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/bitnami/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [opendesk]
+
+  kafka-topics:
+    image: bitnami/kafka:3.7
+    container_name: kafka-topics
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP: kafka:9092
+    entrypoint: ["/bin/bash", "/init/create-topics.sh"]
+    volumes:
+      - ./kafka/create-topics.sh:/init/create-topics.sh:ro
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "true"]   # one-shot init; healthcheck is nominal
+      interval: 5s
+      timeout: 3s
+      retries: 1
+    networks: [opendesk]
+
+  # ---------------- Fluvio (SPEC §5) ----------------
+  # Honest dev setup: SC + local SPU run inside one container via the fluvio
+  # CLI; a CLI sidecar creates the topic against the SC. See fluvio/README.md.
+  fluvio:
+    image: infinyon/fluvio:latest
+    container_name: fluvio
+    restart: unless-stopped
+    command: ["/bin/sh", "/opt/fluvio/start-cluster.sh"]
+    volumes:
+      - ./fluvio/start-cluster.sh:/opt/fluvio/start-cluster.sh:ro
+      - fluvio-data:/root/.fluvio
+    ports:
+      - "9003:9003"
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/fluvio-started"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [opendesk]
+
+  fluvio-topics:
+    image: infinyon/fluvio:latest
+    container_name: fluvio-topics
+    depends_on:
+      fluvio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/opt/fluvio/setup-topics.sh"]
+    environment:
+      FLUVIO_SC_HOST: fluvio:9003
+    volumes:
+      - ./fluvio/setup-topics.sh:/opt/fluvio/setup-topics.sh:ro
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "true"]   # one-shot init; healthcheck is nominal
+      interval: 5s
+      timeout: 3s
+      retries: 1
+    networks: [opendesk]
+
+  # ---------------- Temporal (SPEC §6, namespace `opendesk`) ----------------
+  temporal:
+    image: temporalio/auto-setup:1.24
+    container_name: temporal
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: opendesk
+      POSTGRES_PWD: opendesk
+      POSTGRES_SEEDS: postgres
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal
+      NAMESPACE: opendesk
+      SKIP_NAMESPACE_CREATION: "false"
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development.yaml
+    ports:
+      - "7233:7233"
+    volumes:
+      - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+      - temporal-data:/etc/temporal
+    healthcheck:
+      test: ["CMD-SHELL", "tctl --address localhost:7233 cluster health | grep -q SERVING"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [opendesk]
+
+  temporal-ui:
+    image: temporalio/ui:2.28.0
+    container_name: temporal-ui
+    restart: unless-stopped
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3001
+    ports:
+      - "8233:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [opendesk]
+
+  # ---------------- TigerBeetle (SPEC §9, cluster 0, replica 3000) ----------------
+  tigerbeetle:
+    image: ghcr.io/tigerbeetledb/tigerbeetle:0.16.4
+    container_name: tigerbeetle
+    restart: unless-stopped
+    # Official two-command pattern: format the data file once, then start.
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        if [ ! -f /data/0_0.tigerbeetle ]; then
+          /tigerbeetle format --cluster=0 --replica=0 --replica-count=1 --development /data/0_0.tigerbeetle
+        fi
+        exec /tigerbeetle start --addresses=0.0.0.0:3000 --development /data/0_0.tigerbeetle
+    ports:
+      - "3000:3000"
+    volumes:
+      - tigerbeetle-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [opendesk]
+
+  # ---------------- Permify (SPEC §8) ----------------
+  permify:
+    image: permify/permify:v1.2.7
+    container_name: permify
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["serve"]
+    environment:
+      PERMIFY_SERVER_HTTP_PORT: "3476"
+      PERMIFY_SERVER_GRPC_PORT: "3478"
+      PERMIFY_DATABASE_ENGINE: postgres
+      PERMIFY_DATABASE_URI: postgres://opendesk:opendesk@postgres:5432/permify?sslmode=disable
+      PERMIFY_DATABASE_MAX_OPEN_CONNECTIONS: "20"
+      PERMIFY_DATABASE_MAX_IDLE_CONNECTIONS: "5"
+    ports:
+      - "3476:3476"
+      - "3478:3478"
+    volumes:
+      - permify-data:/var/permify
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3476/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [opendesk]
+
+  permify-schema-loader:
+    image: curlimages/curl:8.8.0
+    container_name: permify-schema-loader
+    depends_on:
+      permify:
+        condition: service_healthy
+    environment:
+      PERMIFY_HTTP: http://permify:3476
+      TENANT_ID: t1
+    entrypoint: ["/bin/sh", "/loader/load-schema.sh"]
+    volumes:
+      - ./permify/schema.perm:/loader/schema.perm:ro
+      - ./permify/load-schema.sh:/loader/load-schema.sh:ro
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "true"]   # one-shot init; healthcheck is nominal
+      interval: 5s
+      timeout: 3s
+      retries: 1
+    networks: [opendesk]
+
+  # ---------------- Keycloak (SPEC §8) ----------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    container_name: keycloak
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: opendesk
+      KC_DB_PASSWORD: opendesk
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+    command: ["start-dev", "--import-realm"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak/realm-opendesk.json:/opt/keycloak/data/import/realm-opendesk.json:ro
+      - keycloak-data:/opt/keycloak/data
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+    networks: [opendesk]
+
+  # ---------------- Mojaloop simulator (SPEC §9) ----------------
+  mojaloop:
+    image: mojaloop/simulator:latest
+    container_name: mojaloop
+    restart: unless-stopped
+    environment:
+      # Simulator exposes FSPIOP endpoints; surfaced on 8444 (SPEC §3).
+      SIM_PORT: "8444"
+    ports:
+      - "8444:8444"
+    volumes:
+      - mojaloop-data:/opt/simulator
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8444/health || wget -q -O /dev/null http://localhost:8444/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+    networks: [opendesk]

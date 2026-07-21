@@ -1,0 +1,24 @@
+# Twilio SMS output binding (booking confirmations / reminders over SMS).
+# Used by notification-worker; credentials via env-var placeholders for dev.
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: bindings-twilio
+spec:
+  type: bindings.twilio.sms
+  version: v1
+  metadata:
+    - name: toNumber
+      value: "${TWILIO_TO_NUMBER}"        # set per invoke at runtime
+    - name: fromNumber
+      value: "${TWILIO_FROM_NUMBER}"      # provisioned Twilio number
+    - name: accountSid
+      value: "${TWILIO_ACCOUNT_SID}"
+    - name: authToken
+      secretKeyRef:
+        name: TWILIO_AUTH_TOKEN
+        key: TWILIO_AUTH_TOKEN
+auth:
+  secretStore: envvar-secret-store
+scopes:
+  - notification
