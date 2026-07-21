@@ -1,0 +1,82 @@
+# Representative app Deployment for the k3s edge appliance (see
+# identity-deployment.yaml header for image-name convention).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: booking
+  namespace: opendesk
+  labels:
+    app: booking
+    app.kubernetes.io/part-of: opendesk
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: booking
+  template:
+    metadata:
+      labels:
+        app: booking
+    spec:
+      containers:
+        - name: booking
+          image: opendesk-booking:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 7002
+          env:
+            - name: PORT
+              value: "7002"
+            - name: PG_DSN
+              value: postgres://opendesk:opendesk@postgres:5432
+            - name: PG_DATABASE
+              value: booking
+            - name: DATABASE_URL
+              value: postgres://opendesk:opendesk@postgres:5432/booking
+            - name: KAFKA_BROKERS
+              value: kafka:9092
+            - name: REDIS_ADDR
+              value: redis:6379
+            - name: TEMPORAL_ADDRESS
+              value: temporal:7233
+            - name: TEMPORAL_NAMESPACE
+              value: opendesk
+            - name: TEMPORAL_TASK_QUEUE
+              value: opendesk-main
+            - name: PERMIFY_HTTP
+              value: http://permify:3476
+            # Dev parity: booking runs with AUTHZ_DISABLED=true in dev; on the
+            # appliance keep it disabled behind the local gateway only.
+            - name: AUTHZ_DISABLED
+              value: "true"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 7002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 7002
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: booking
+  namespace: opendesk
+spec:
+  selector:
+    app: booking
+  ports:
+    - port: 7002
+      targetPort: 7002
