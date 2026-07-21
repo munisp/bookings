@@ -1,0 +1,691 @@
+# OpenDesk — full platform (SPEC.md §2, §3).
+# Services live under services/*; middleware configs under infra/*.
+# App services each run with a Dapr sidecar (daprd-<svc>) per SPEC §3.
+name: opendesk
+
+networks:
+  opendesk:
+    driver: bridge
+
+volumes:
+  apisix-etcd:
+  postgres:
+  redis:
+  kafka:
+  minio:
+  opensearch:
+  temporal:
+  livekit:
+  tigerbeetle:
+  twenty-redis:
+  backups:
+
+services:
+  # ------------------------------------------------------------- gateway --
+  apisix-etcd:
+    image: bitnami/etcd:3.5
+    container_name: apisix-etcd
+    environment:
+      ETCD_ENABLE_V2: "true"
+      ALLOW_NONE_AUTHENTICATION: "yes"
+      ETCD_ADVERTISE_CLIENT_URLS: http://apisix-etcd:2379
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+    volumes:
+      - apisix-etcd:/bitnami/etcd
+    networks: [opendesk]
+
+  apisix:
+    image: apache/apisix:3.9.1-debian
+    container_name: apisix
+    depends_on:
+      - apisix-etcd
+    ports:
+      - "9080:9080"  # proxy
+      - "9180:9180"  # admin api
+    volumes:
+      - ./infra/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./infra/apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+    networks: [opendesk]
+
+  # ---------------------------------------------------------- middleware --
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    container_name: keycloak
+    command: start-dev --import-realm --hostname-url http://localhost:8080
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin123
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infra/keycloak/realm-opendesk.json:/opt/keycloak/data/import/realm-opendesk.json:ro
+    networks: [opendesk]
+
+  permify:
+    image: ghcr.io/permify/permify:v1.2.3
+    container_name: permify
+    command: serve --database-engine=postgres
+    environment:
+      PERMIFY_DATABASE_URI: postgres://opendesk:opendesk@postgres:5432/permify
+    ports:
+      - "3476:3476"
+      - "3478:3478"
+    depends_on:
+      - postgres
+    volumes:
+      - ./infra/permify/schema.perm:/etc/permify/schema.perm:ro
+    networks: [opendesk]
+
+  kafka:
+    image: bitnami/kafka:3.7
+    container_name: kafka
+    environment:
+      KAFKA_CFG_NODE_ID: "0"
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "false"
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafka:/bitnami/kafka
+    networks: [opendesk]
+
+  kafka-topics:
+    image: bitnami/kafka:3.7
+    container_name: kafka-topics
+    depends_on:
+      - kafka
+    entrypoint: ["/bin/bash", "/scripts/create-topics.sh"]
+    volumes:
+      - ./infra/kafka/create-topics.sh:/scripts/create-topics.sh:ro
+    networks: [opendesk]
+    restart: "no"
+
+  fluvio:
+    image: infinyon/fluvio:stable
+    container_name: fluvio
+    command: ["/bin/sh", "-c", "fluvio cluster start --local"]
+    ports:
+      - "9003:9003"
+    networks: [opendesk]
+
+  temporal:
+    image: temporalio/auto-setup:1.24
+    container_name: temporal
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: opendesk
+      POSTGRES_PWD: opendesk
+      POSTGRES_SEEDS: postgres
+      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/dynamicconfig.yaml
+    ports:
+      - "7233:7233"
+    depends_on:
+      - postgres
+    volumes:
+      - ./infra/temporal/dynamicconfig.yaml:/etc/temporal/dynamicconfig.yaml:ro
+      - temporal:/etc/temporal/data
+    networks: [opendesk]
+
+  temporal-ui:
+    image: temporalio/ui:2.28
+    container_name: temporal-ui
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    ports:
+      - "8233:8080"
+    depends_on:
+      - temporal
+    networks: [opendesk]
+
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-opendesk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-opendesk}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      - ./infra/postgres/init-scripts:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opendesk"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [opendesk]
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis:/data
+    networks: [opendesk]
+
+  tigerbeetle:
+    image: ghcr.io/tigerbeetle/tigerbeetle:0.16.11
+    container_name: tigerbeetle
+    command: start --addresses=0.0.0.0:3000 /data/0_0.tigerbeetle
+    ports:
+      - "3000:3000"
+    volumes:
+      - tigerbeetle:/data
+    networks: [opendesk]
+
+  mojaloop:
+    image: mojaloop/simulator:v12.0.0
+    container_name: mojaloop
+    ports:
+      - "8444:8444"
+    networks: [opendesk]
+
+  opensearch:
+    image: opensearchproject/opensearch:2.13
+    container_name: opensearch
+    environment:
+      discovery.type: single-node
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: OpenDesk!Dev1
+      plugins.security.disabled: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+    ports:
+      - "9200:9200"
+    volumes:
+      - opensearch:/usr/share/opensearch/data
+      - ./infra/opensearch/index-templates.json:/usr/share/opensearch/config/index-templates.json:ro
+    networks: [opendesk]
+
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.13
+    container_name: opensearch-dashboards
+    environment:
+      OPENSEARCH_HOSTS: http://opensearch:9200
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true"
+    ports:
+      - "5601:5601"
+    depends_on:
+      - opensearch
+    networks: [opendesk]
+
+  minio:
+    image: minio/minio:RELEASE.2024-05-10T01-41-38Z
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio:/data
+    networks: [opendesk]
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-05-09T17-04-24Z
+    container_name: minio-init
+    depends_on:
+      - minio
+    entrypoint: ["/bin/sh", "/scripts/init-buckets.sh"]
+    volumes:
+      - ./infra/lakehouse/init-buckets.sh:/scripts/init-buckets.sh:ro
+    networks: [opendesk]
+    restart: "no"
+
+  iceberg-rest:
+    image: tabulario/iceberg-rest:0.6.0
+    container_name: iceberg-rest
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_REGION: us-east-1
+      CATALOG_WAREHOUSE: s3://lake/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+    ports:
+      - "8181:8181"
+    depends_on:
+      - minio
+    networks: [opendesk]
+
+  trino:
+    image: trinodb/trino:439
+    container_name: trino
+    ports:
+      - "8088:8080"
+    volumes:
+      - ./infra/lakehouse/trino/catalog:/etc/trino/catalog:ro
+    depends_on:
+      - iceberg-rest
+      - postgres
+    networks: [opendesk]
+
+  spark-master:
+    image: bitnami/spark:3.5
+    container_name: spark-master
+    environment:
+      SPARK_MODE: master
+    ports:
+      - "7077:7077"
+      - "8081:8080"
+    networks: [opendesk]
+
+  spark-worker:
+    image: bitnami/spark:3.5
+    container_name: spark-worker
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+    depends_on:
+      - spark-master
+    networks: [opendesk]
+
+  # ---------------------------------------------------------- voice (opt) --
+  livekit:
+    image: livekit/livekit-server:v1.7
+    container_name: livekit
+    command: --dev --bind 0.0.0.0
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+    volumes:
+      - livekit:/data
+    networks: [opendesk]
+
+  ollama:
+    image: ollama/ollama:0.3.12
+    container_name: ollama
+    profiles: ["voice"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    networks: [opendesk]
+
+  # ---------------------------------------------------------- dapr sidecars
+  # One daprd per app service per SPEC §3. Components: infra/dapr/components.
+  daprd-identity:
+    image: daprio/daprd:1.14
+    container_name: daprd-identity
+    command: ["./daprd", "--app-id", "identity", "--app-port", "7001", "--dapr-http-port", "3500", "--resources-path", "/components", "--log-level", "warn"]
+    volumes:
+      - ./infra/dapr/components:/components:ro
+    networks: [opendesk]
+
+  daprd-booking:
+    image: daprio/daprd:1.14
+    container_name: daprd-booking
+    command: ["./daprd", "--app-id", "booking", "--app-port", "7002", "--dapr-http-port", "3500", "--resources-path", "/components", "--log-level", "warn"]
+    volumes:
+      - ./infra/dapr/components:/components:ro
+    networks: [opendesk]
+
+  daprd-notification:
+    image: daprio/daprd:1.14
+    container_name: daprd-notification
+    command: ["./daprd", "--app-id", "notification", "--app-port", "7003", "--dapr-http-port", "3500", "--resources-path", "/components", "--log-level", "warn"]
+    volumes:
+      - ./infra/dapr/components:/components:ro
+    networks: [opendesk]
+
+  daprd-payments:
+    image: daprio/daprd:1.14
+    container_name: daprd-payments
+    command: ["./daprd", "--app-id", "payments", "--app-port", "7004", "--dapr-http-port", "3500", "--resources-path", "/components", "--log-level", "warn"]
+    volumes:
+      - ./infra/dapr/components:/components:ro
+    networks: [opendesk]
+
+  daprd-edge:
+    image: daprio/daprd:1.14
+    container_name: daprd-edge
+    command: ["./daprd", "--app-id", "edge", "--app-port", "7005", "--dapr-http-port", "3500", "--resources-path", "/components", "--log-level", "warn"]
+    volumes:
+      - ./infra/dapr/components:/components:ro
+    networks: [opendesk]
+
+  daprd-voice:
+    image: daprio/daprd:1.14
+    container_name: daprd-voice
+    command: ["./daprd", "--app-id", "voice", "--app-port", "7006", "--dapr-http-port", "3500", "--resources-path", "/components", "--log-level", "warn"]
+    volumes:
+      - ./infra/dapr/components:/components:ro
+    networks: [opendesk]
+
+  daprd-conversation:
+    image: daprio/daprd:1.14
+    container_name: daprd-conversation
+    command: ["./daprd", "--app-id", "conversation", "--app-port", "7007", "--dapr-http-port", "3500", "--resources-path", "/components", "--log-level", "warn"]
+    volumes:
+      - ./infra/dapr/components:/components:ro
+    networks: [opendesk]
+
+  daprd-knowledge:
+    image: daprio/daprd:1.14
+    container_name: daprd-knowledge
+    command: ["./daprd", "--app-id", "knowledge", "--app-port", "7008", "--dapr-http-port", "3500", "--resources-path", "/components", "--log-level", "warn"]
+    volumes:
+      - ./infra/dapr/components:/components:ro
+    networks: [opendesk]
+
+  daprd-analytics:
+    image: daprio/daprd:1.14
+    container_name: daprd-analytics
+    command: ["./daprd", "--app-id", "analytics", "--app-port", "7009", "--dapr-http-port", "3500", "--resources-path", "/components", "--log-level", "warn"]
+    volumes:
+      - ./infra/dapr/components:/components:ro
+    networks: [opendesk]
+
+  daprd-crm-sync:
+    image: daprio/daprd:1.14
+    container_name: daprd-crm-sync
+    command: ["./daprd", "--app-id", "crm-sync", "--app-port", "7010", "--dapr-http-port", "3500", "--resources-path", "/components", "--log-level", "warn"]
+    volumes:
+      - ./infra/dapr/components:/components:ro
+    networks: [opendesk]
+
+  # ------------------------------------------------------------- services --
+  identity:
+    build: ./services/identity-service
+    container_name: identity
+    environment:
+      PORT: "7001"
+      PG_DSN: postgres://opendesk:opendesk@postgres:5432
+      PG_DATABASE: identity
+      DATABASE_URL: postgres://opendesk:opendesk@postgres:5432/identity
+      KAFKA_BROKERS: kafka:9092
+      REDIS_ADDR: redis:6379
+      KEYCLOAK_URL: http://keycloak:8080
+      PERMIFY_HTTP: http://permify:3476
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: opendesk
+      TEMPORAL_TASK_QUEUE: opendesk-main
+      DAPR_HTTP_PORT: "3500"
+      DAPR_HOST: daprd-identity
+      INDUSTRIES_DIR: /industries
+    ports:
+      - "7001:7001"
+    depends_on:
+      - postgres
+      - kafka
+      - keycloak
+      - daprd-identity
+    volumes:
+      - ./industries:/industries:ro
+    networks: [opendesk]
+
+  booking:
+    build: ./services/booking-service
+    container_name: booking
+    environment:
+      PORT: "7002"
+      PG_DSN: postgres://opendesk:opendesk@postgres:5432
+      PG_DATABASE: booking
+      DATABASE_URL: postgres://opendesk:opendesk@postgres:5432/booking
+      KAFKA_BROKERS: kafka:9092
+      REDIS_ADDR: redis:6379
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: opendesk
+      TEMPORAL_TASK_QUEUE: opendesk-main
+      PERMIFY_HTTP: http://permify:3476
+      DAPR_HTTP_PORT: "3500"
+      DAPR_HOST: daprd-booking
+      AUTHZ_DISABLED: "true"
+    ports:
+      - "7002:7002"
+    depends_on:
+      - postgres
+      - kafka
+      - temporal
+      - daprd-booking
+    networks: [opendesk]
+
+  notification:
+    build: ./services/notification-worker
+    container_name: notification
+    environment:
+      PORT: "7003"
+      PG_DSN: postgres://opendesk:opendesk@postgres:5432
+      KAFKA_BROKERS: kafka:9092
+      REDIS_ADDR: redis:6379
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: opendesk
+      TEMPORAL_TASK_QUEUE: opendesk-main
+      DAPR_HTTP_PORT: "3500"
+      DAPR_HOST: daprd-notification
+      INDUSTRIES_DIR: /industries
+    ports:
+      - "7003:7003"
+    depends_on:
+      - temporal
+      - kafka
+      - daprd-notification
+    volumes:
+      - ./industries:/industries:ro
+    networks: [opendesk]
+
+  payments:
+    build: ./services/payments-service
+    container_name: payments
+    environment:
+      PORT: "7004"
+      TIGERBEETLE_ADDR: tigerbeetle:3000
+      MOJALOOP_ENDPOINT: http://mojaloop:8444
+      LEDGER_IMPL: ${LEDGER_IMPL:-sim}
+      KAFKA_BROKERS: kafka:9092
+      DAPR_HTTP_PORT: "3500"
+      DAPR_HOST: daprd-payments
+    ports:
+      - "7004:7004"
+    depends_on:
+      - tigerbeetle
+      - daprd-payments
+    networks: [opendesk]
+
+  edge:
+    build: ./services/gateway-edge
+    container_name: edge
+    environment:
+      PORT: "7005"
+      KAFKA_BROKERS: kafka:9092
+      FLUVIO_ADDR: fluvio:9003
+      REDIS_ADDR: redis:6379
+      EDGE_JWT_SECRET: opendesk-dev-jwt-hs256-secret-change-in-prod
+      DAPR_HTTP_PORT: "3500"
+      DAPR_HOST: daprd-edge
+    ports:
+      - "7005:7005"
+    depends_on:
+      - kafka
+      - daprd-edge
+    networks: [opendesk]
+
+  voice:
+    build: ./services/voice-agent-runtime
+    container_name: voice
+    environment:
+      PORT: "7006"
+      AGENT_BACKEND: ${AGENT_BACKEND:-livekit}
+      LIVEKIT_URL: ws://livekit:7880
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://ollama:11434/v1}
+      LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      KAFKA_BROKERS: kafka:9092
+      DAPR_HTTP_PORT: "3500"
+      DAPR_HOST: daprd-voice
+      BOOKING_URL: http://booking:7002
+      KNOWLEDGE_URL: http://knowledge:7008
+      CONVERSATION_URL: http://conversation:7007
+      IDENTITY_URL: http://identity:7001
+    ports:
+      - "7006:7006"
+    depends_on:
+      - livekit
+      - daprd-voice
+    networks: [opendesk]
+
+  conversation:
+    build: ./services/conversation-service
+    container_name: conversation
+    environment:
+      PORT: "7007"
+      PG_DSN: postgres://opendesk:opendesk@postgres:5432
+      DATABASE_URL: postgres://opendesk:opendesk@postgres:5432/conversation
+      KAFKA_BROKERS: kafka:9092
+      FLUVIO_ADDR: fluvio:9003
+      DAPR_HTTP_PORT: "3500"
+      DAPR_HOST: daprd-conversation
+    ports:
+      - "7007:7007"
+    depends_on:
+      - postgres
+      - kafka
+      - daprd-conversation
+    networks: [opendesk]
+
+  knowledge:
+    build: ./services/knowledge-service
+    container_name: knowledge
+    environment:
+      PORT: "7008"
+      PG_DSN: postgres://opendesk:opendesk@postgres:5432
+      DATABASE_URL: postgres://opendesk:opendesk@postgres:5432/knowledge
+      OPENSEARCH_ADDR: http://opensearch:9200
+      TRINO_URL: http://trino:8080
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://ollama:11434/v1}
+      LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      DAPR_HTTP_PORT: "3500"
+      DAPR_HOST: daprd-knowledge
+    ports:
+      - "7008:7008"
+    depends_on:
+      - postgres
+      - opensearch
+      - daprd-knowledge
+    networks: [opendesk]
+
+  analytics:
+    build: ./services/analytics-pipeline
+    container_name: analytics
+    environment:
+      PORT: "7009"
+      KAFKA_BROKERS: kafka:9092
+      MINIO_ENDPOINT: http://minio:9000
+      ICEBERG_REST: http://iceberg-rest:8181
+      TRINO_URL: http://trino:8080
+      DAPR_HTTP_PORT: "3500"
+      DAPR_HOST: daprd-analytics
+    ports:
+      - "7009:7009"
+    depends_on:
+      - kafka
+      - minio
+      - daprd-analytics
+    networks: [opendesk]
+
+  crm-sync:
+    build: ./services/crm-sync-service
+    container_name: crm-sync
+    environment:
+      PORT: "7010"
+      KAFKA_BROKERS: kafka:9092
+      PG_DSN: postgres://opendesk:opendesk@postgres:5432/crm_sync
+      TWENTY_API_URL: http://twenty-api:3000
+      TWENTY_API_KEY: ${TWENTY_API_KEY:-opendesk-dev-twenty-api-key}
+      TWENTY_WEBHOOK_SECRET: ${TWENTY_WEBHOOK_SECRET:-opendesk-dev-twenty-webhook-secret}
+      TWENTY_RATE_PER_MIN: "90"
+      DAPR_HTTP_PORT: "3500"
+      DAPR_HOST: daprd-crm-sync
+    ports:
+      - "7010:7010"
+    depends_on:
+      - kafka
+      - postgres
+      - twenty-api
+      - daprd-crm-sync
+    networks: [opendesk]
+
+  # --------------------------------------------------------- Twenty CRM ---
+  twenty-api:
+    image: twentycrm/twenty:v1.3.2
+    container_name: twenty-api
+    environment:
+      NODE_PORT: "3000"
+      PG_DATABASE_URL: postgres://opendesk:opendesk@postgres:5432/twenty
+      REDIS_URL: redis://twenty-redis:6379
+      SERVER_URL: http://localhost:3100
+      FRONT_BASE_URL: http://localhost:3100
+      MESSAGE_QUEUE_TYPE: bull-mq
+      STORAGE_TYPE: local
+      ACCESS_TOKEN_SECRET: ${TWENTY_ACCESS_TOKEN_SECRET:-opendesk-twenty-access-token-dev}
+      LOGIN_TOKEN_SECRET: ${TWENTY_LOGIN_TOKEN_SECRET:-opendesk-twenty-login-token-dev}
+      REFRESH_TOKEN_SECRET: ${TWENTY_REFRESH_TOKEN_SECRET:-opendesk-twenty-refresh-token-dev}
+      FILE_TOKEN_SECRET: ${TWENTY_FILE_TOKEN_SECRET:-opendesk-twenty-file-token-dev}
+      APP_SECRET: ${TWENTY_APP_SECRET:-opendesk-twenty-app-secret-dev}
+    ports:
+      - "3100:3000"
+    depends_on:
+      - postgres
+      - twenty-redis
+    networks: [opendesk]
+
+  twenty-worker:
+    image: twentycrm/twenty:v1.3.2
+    container_name: twenty-worker
+    command: ["yarn", "worker:prod"]
+    environment:
+      PG_DATABASE_URL: postgres://opendesk:opendesk@postgres:5432/twenty
+      REDIS_URL: redis://twenty-redis:6379
+      SERVER_URL: http://localhost:3100
+      FRONT_BASE_URL: http://localhost:3100
+      MESSAGE_QUEUE_TYPE: bull-mq
+      STORAGE_TYPE: local
+      ACCESS_TOKEN_SECRET: ${TWENTY_ACCESS_TOKEN_SECRET:-opendesk-twenty-access-token-dev}
+      LOGIN_TOKEN_SECRET: ${TWENTY_LOGIN_TOKEN_SECRET:-opendesk-twenty-login-token-dev}
+      REFRESH_TOKEN_SECRET: ${TWENTY_REFRESH_TOKEN_SECRET:-opendesk-twenty-refresh-token-dev}
+      FILE_TOKEN_SECRET: ${TWENTY_FILE_TOKEN_SECRET:-opendesk-twenty-file-token-dev}
+      APP_SECRET: ${TWENTY_APP_SECRET:-opendesk-twenty-app-secret-dev}
+    depends_on:
+      - twenty-api
+      - twenty-redis
+    networks: [opendesk]
+
+  twenty-redis:
+    image: redis:7-alpine
+    container_name: twenty-redis
+    volumes:
+      - twenty-redis:/data
+    networks: [opendesk]
+
+  web:
+    build: ./apps/admin-web
+    container_name: web
+    environment:
+      PORT: "3001"
+      AUTH_SECRET: ${AUTH_SECRET:-dev-secret-change-me}
+      AUTH_URL: http://localhost:3001
+      AUTH_TRUST_HOST: "true"
+      KEYCLOAK_ISSUER: http://keycloak:8080/realms/opendesk
+      KEYCLOAK_ISSUER_PUBLIC: http://localhost:8080/realms/opendesk
+      KEYCLOAK_CLIENT_ID: admin-web
+      API_BASE_URL: http://apisix:9080
+      NEXT_PUBLIC_API_BASE: http://localhost:9080
+      NEXT_PUBLIC_WS_BASE: ws://localhost:9080/ws
+    ports:
+      - "3001:3001"
+    depends_on:
+      - apisix
+      - identity
+      - booking
+    networks: [opendesk]
