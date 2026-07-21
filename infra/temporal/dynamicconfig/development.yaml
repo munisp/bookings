@@ -1,0 +1,18 @@
+# Minimal dev dynamic config for temporalio/auto-setup (SPEC §6).
+# Referenced via DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development.yaml.
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+system.enableReadFromSecondaryVisibility:
+  - value: false
+    constraints: {}
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints:
+      namespace: opendesk
+frontend.workerVersioningDataAPIs:
+  - value: true
+    constraints: {}
+frontend.workerVersioningWorkflowAPIs:
+  - value: true
+    constraints: {}
