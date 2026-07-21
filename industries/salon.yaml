@@ -1,0 +1,102 @@
+# Salon industry pack (SPEC-CRM §C) — hair/beauty salons and barbershops.
+id: salon
+displayName: Salon & Barbershop
+terminology:
+  offering: service
+  team_member: stylist
+  booking: appointment
+  contact: client
+agentPersona: |
+  You are the front-desk receptionist of a busy salon. You are warm, upbeat and
+  style-savvy. You know the service menu by heart (cuts, colours, treatments),
+  can describe what each service includes, and help clients pick the right
+  stylist for their hair type and desired look. You always mention the 30%
+  deposit policy when booking, remind clients to arrive 5 minutes early, and
+  suggest prep notes (e.g. come with clean, dry hair for colour services).
+  If a client asks about pricing you quote from the service menu and never
+  invent discounts.
+bookingPolicy:
+  depositPercent: 30
+  noShowFeeCents: 2000
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 24
+temporalWorkflow: SalonDepositWorkflow
+offerings:
+- name: Women's Haircut & Style
+  duration_min: 60
+  buffer_min: 15
+  price_cents: 6500
+  capacity: 1
+- name: Men's Haircut
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 3500
+  capacity: 1
+- name: Full Colour & Blowout
+  duration_min: 120
+  buffer_min: 20
+  price_cents: 14500
+  capacity: 1
+- name: Balayage Consultation
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 0
+  capacity: 1
+- name: Bridal Updo
+  duration_min: 90
+  buffer_min: 15
+  price_cents: 11000
+  capacity: 1
+reminders:
+  offsets: ["24h", "1h"]
+  channels: ["email", "sms"]
+knowledgeSeed:
+- title: Salon opening hours & booking policy
+  body: |
+    The salon is open Tuesday to Saturday, 9:00 to 19:00, and closed on
+    Sundays and Mondays. A 30% deposit is collected at booking time for all
+    paid services. Cancellations are free of charge up to 24 hours before the
+    appointment; inside that window the deposit is forfeited. Clients who do
+    not show up are charged a no-show fee of 20.00 in the local currency.
+- title: Service prep notes
+  body: |
+    Colour services: arrive with clean, completely dry hair and avoid heavy
+    styling products on the day. Balayage and full colour appointments include
+    a strand test on first visit. Bridal updos include a 20-minute trial sketch
+    discussion; bring inspiration photos. Children under 12 are booked only in
+    the 9:00-12:00 morning block.
+- title: Stylists and specialities
+  body: |
+    Each stylist has a speciality listed on the team page: precision cutting,
+    curly-hair expertise, blonding and balayage, or occasion styling. When a
+    client describes their hair type or the look they want, recommend the
+    stylist whose speciality matches, and mention that all stylists are
+    happy to do a free 15-minute consultation first.
+dashboardLabels:
+  bookingSingular: Appointment
+  bookingPlural: Appointments
+  customerTerm: Client
+# Multi-agent crew (SPEC-W3 §4, innovation 6): the voice runtime routes a
+# turn to a specialist when the caller's message matches its intent keywords,
+# swapping the persona below into the system prompt while active.
+agents:
+- id: style-consultant
+  name: Style Consultant
+  persona: |
+    You are the salon's style consultant. You help clients choose services and
+    stylists: ask about hair type, current colour and the look they want, then
+    recommend the matching service and the stylist whose speciality fits. You
+    explain prep notes (clean dry hair for colour, strand tests, inspiration
+    photos for bridal) and always suggest the free 15-minute consultation when
+    a client is unsure.
+  intents: [style, haircut, colour, color, balayage, highlights, curly, bridal, updo, recommendation, "hair type"]
+- id: booking-coordinator
+  name: Booking Coordinator
+  persona: |
+    You are the salon's booking coordinator. You handle everything about
+    appointments: finding slots, the 30% deposit policy, rescheduling,
+    cancellations inside the 24-hour window, deposits forfeiture and the
+    no-show fee. You are precise about dates and times and always confirm the
+    client's phone number before changing an appointment.
+  intents: [book, booking, appointment, reschedule, cancel, deposit, "no show", availability, slot, reminder]

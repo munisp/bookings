@@ -1,0 +1,89 @@
+# Consultancy industry pack (SPEC-CRM §C) — agencies, advisors, freelancers.
+id: consultancy
+displayName: Consultancy & Advisory
+terminology:
+  offering: engagement
+  team_member: consultant
+  booking: session
+  contact: prospect
+agentPersona: |
+  You are the client coordinator of a professional consultancy. You are
+  polished, concise and commercially aware. Your first goal with any new
+  caller is to book a free 30-minute discovery call: qualify gently (company,
+  challenge, timeline, budget range) without interrogating. You can describe
+  the engagement types at a high level but never quote a final project price —
+  pricing always follows a written proposal after discovery. After every
+  discovery call the prospect receives a follow-up email and a tailored
+  proposal within seven days. You mention that invoices are due within 14 days
+  of issue when asked about payment terms.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 24
+temporalWorkflow: ConsultancyFollowupWorkflow
+offerings:
+- name: Discovery Call (free)
+  duration_min: 30
+  buffer_min: 15
+  price_cents: 0
+  capacity: 1
+- name: Strategy Session
+  duration_min: 60
+  buffer_min: 15
+  price_cents: 25000
+  capacity: 1
+- name: Workshop (half day)
+  duration_min: 240
+  buffer_min: 30
+  price_cents: 120000
+  capacity: 4
+- name: Retainer Check-in
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 15000
+  capacity: 1
+reminders:
+  offsets: ["24h", "1h"]
+  channels: ["email"]
+knowledgeSeed:
+- title: Engagement types & proposal process
+  body: |
+    Every new client relationship starts with a free 30-minute discovery call.
+    After the call the consulting team sends a written proposal within seven
+    days; the proposal includes scope, deliverables, timeline and fixed
+    pricing. Work never starts before the proposal is signed. Strategy
+    sessions and workshops can be booked directly by existing clients. A
+    follow-up email with call notes and next steps is sent after every
+    discovery call, and a CRM follow-up task is created for the account owner.
+- title: Payment & invoicing terms
+  body: |
+    Discovery calls are always free. Paid sessions are invoiced after
+    delivery; invoices are due within 14 days of issue. Retainer clients are
+    invoiced monthly in advance. Late payments pause ongoing work until the
+    balance is settled. Rescheduling is free up to 24 hours before a session;
+    repeated last-minute cancellations may require prepayment for future
+    sessions.
+- title: What to prepare for a discovery call
+  body: |
+    Prospects get the most out of a discovery call when they can describe
+    their current situation, the outcome they want, any hard deadlines, and a
+    rough budget range. Relevant documents (current strategy decks, process
+    maps, org charts) can be shared in advance by replying to the booking
+    confirmation email. All discovery calls are confidential and covered by
+    the mutual NDA available on request.
+dashboardLabels:
+  bookingSingular: Session
+  bookingPlural: Sessions
+  customerTerm: Prospect
+# Plugin tools MVP (SPEC-W3 §4, innovation 15): declarative HTTP tools the
+# voice runtime registers in its tool layer. {{var}} placeholders are filled
+# from tool-call arguments (and the session context vars site_slug,
+# tenant_slug, tenant_id); the host must pass the runtime's
+# PLUGIN_ALLOWED_HOSTS SSRF allowlist (default booking,knowledge,identity).
+customTools:
+- name: check_calendar_availability
+  description: Check a consultant's open calendar slots for an engagement type in a time range.
+  method: GET
+  url: http://booking:7002/public/sites/{{site_slug}}/availability

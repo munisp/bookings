@@ -1,0 +1,108 @@
+# Clinic industry pack (SPEC-CRM §C) — private medical/dental/physio clinics.
+id: clinic
+displayName: Medical Clinic
+terminology:
+  offering: treatment
+  team_member: practitioner
+  booking: visit
+  contact: patient
+agentPersona: |
+  You are the receptionist of a medical clinic. You are calm, discreet and
+  precise. Handle every caller as a patient: never repeat medical details back
+  over the phone beyond what is needed to book, never guess at diagnoses, and
+  never offer medical advice — always offer to book a visit with a practitioner
+  instead. Treat all personal information as confidential (HIPAA-style care):
+  confirm identity with name and date of birth before discussing an existing
+  visit, and never disclose another patient's information. Every new patient
+  must complete the intake form before their visit; explain that it is sent by
+  email 72 hours ahead and takes about five minutes. Prices are fixed clinic
+  rates — never offer or imply discounts.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 4500
+  phoneConfirmation: true
+  intakeRequired: true
+  cancellationWindowHours: 48
+temporalWorkflow: ClinicIntakeWorkflow
+offerings:
+- name: General Consultation
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 9000
+  capacity: 1
+- name: New Patient Intake Visit
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 12000
+  capacity: 1
+- name: Follow-up Visit
+  duration_min: 20
+  buffer_min: 10
+  price_cents: 6000
+  capacity: 1
+- name: Physiotherapy Session
+  duration_min: 50
+  buffer_min: 10
+  price_cents: 8500
+  capacity: 2
+- name: Annual Health Check
+  duration_min: 60
+  buffer_min: 15
+  price_cents: 18000
+  capacity: 1
+reminders:
+  offsets: ["72h", "24h", "2h"]
+  channels: ["email", "sms"]
+knowledgeSeed:
+- title: Clinic hours, consent & intake policy
+  body: |
+    The clinic is open Monday to Friday, 8:00 to 18:00. All new patients must
+    complete the digital intake and consent form before their first visit; the
+    form link is emailed 72 hours before the appointment. Patients who have not
+    completed intake 2 hours before the visit may be asked to reschedule.
+    Cancellations are free up to 48 hours before the visit; late cancellations
+    and no-shows incur a 45.00 fee. The clinic does not offer discounts or
+    promotional pricing on any treatment.
+- title: Patient privacy practices
+  body: |
+    Patient information is handled under strict confidentiality. Staff verify
+    identity with full name and date of birth before discussing any visit
+    details. Medical records are never discussed with third parties without
+    written patient consent. Callers asking about another patient's
+    appointments are politely refused and offered to pass a message to the
+    care team instead.
+- title: Treatments and what to expect
+  body: |
+    A general consultation is 30 minutes and covers one primary concern. The
+    new patient intake visit is 45 minutes and includes a full medical history
+    review. Physiotherapy sessions run 50 minutes; wear comfortable clothing.
+    Annual health checks require fasting for 8 hours beforehand (water is
+    fine). Prescription renewals are handled in a follow-up visit and cannot
+    be issued over the phone.
+dashboardLabels:
+  bookingSingular: Visit
+  bookingPlural: Visits
+  customerTerm: Patient
+# Multi-agent crew (SPEC-W3 §4, innovation 6): the voice runtime routes a
+# turn to a specialist when the caller's message matches its intent keywords,
+# swapping the persona below into the system prompt while active.
+agents:
+- id: intake-nurse
+  name: Intake Nurse
+  persona: |
+    You are the clinic's intake nurse. You warmly guide new patients through
+    the intake process: explain the digital intake and consent form (emailed
+    72 hours before the first visit, about five minutes), what information to
+    prepare (medical history, current medications, allergies), and how the
+    first visit unfolds. You never give medical advice or triage symptoms —
+    you note the concern briefly and book an intake visit with a practitioner.
+  intents: [intake, "new patient", "first visit", form, consent, registration, "medical history"]
+- id: insurance-checker
+  name: Insurance Checker
+  persona: |
+    You are the clinic's insurance and billing specialist. You explain which
+    information patients need for claims, how clinic invoicing works, what the
+    fixed clinic rates are, and how the no-show and late-cancellation fees are
+    billed. You never promise that a treatment is covered — you advise the
+    patient to confirm coverage with their insurer and offer to book a visit.
+  intents: [insurance, coverage, billing, invoice, claim, cost, price, fee, payment]

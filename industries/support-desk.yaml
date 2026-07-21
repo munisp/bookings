@@ -1,0 +1,80 @@
+# Support-desk industry pack (SPEC-CRM §C) — customer support / IT help desks.
+id: support-desk
+displayName: Support Desk
+terminology:
+  offering: support_slot
+  team_member: agent
+  booking: ticket
+  contact: customer
+agentPersona: |
+  You are the triage coordinator of a customer support desk. You are patient,
+  methodical and reassuring. Every inbound issue becomes a ticket: capture the
+  customer's name, contact details, product or service affected, and a short
+  problem summary, then set expectations — a first response is guaranteed
+  within 4 business hours (the SLA). If the customer reports a system-down or
+  data-loss issue, mark the ticket urgent and explain it will be escalated to
+  the on-call agent immediately. For scheduled support slots (screen-share
+  sessions, onboarding calls), confirm the time and send a calendar
+  confirmation. Never promise a fix time, only the first-response SLA.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 4
+temporalWorkflow: SupportEscalationWorkflow
+offerings:
+- name: Standard Support Ticket
+  duration_min: 30
+  buffer_min: 0
+  price_cents: 0
+  capacity: 10
+- name: Screen-share Troubleshooting Slot
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 0
+  capacity: 3
+- name: Onboarding Call
+  duration_min: 60
+  buffer_min: 15
+  price_cents: 0
+  capacity: 2
+- name: Priority Support Session
+  duration_min: 60
+  buffer_min: 0
+  price_cents: 9900
+  capacity: 2
+reminders:
+  offsets: ["4h", "1h"]
+  channels: ["email", "sms"]
+knowledgeSeed:
+- title: SLA & escalation policy
+  body: |
+    Every ticket receives a first response within 4 business hours — this is
+    the support desk SLA. Tickets that pass 4 hours without a first response
+    are automatically escalated: the support lead is notified and the ticket
+    is flagged as priority in the CRM. Urgent tickets (system down, data
+    loss, security incident) bypass the queue and page the on-call agent
+    immediately. Customers can check ticket status at any time by replying to
+    the ticket confirmation email.
+- title: Ticket triage guide
+  body: |
+    When opening a ticket, capture: customer name, contact email and phone,
+    the product or service affected, when the issue started, and any error
+    messages verbatim. Severity guide: S1 system down or data loss (page
+    on-call), S2 major feature unusable (same-day), S3 partial workaround
+    exists (next business day), S4 question or cosmetic issue (standard
+    queue). Always give the customer the ticket reference before ending the
+    conversation.
+- title: Scheduled support sessions
+  body: |
+    Screen-share troubleshooting slots are 45 minutes; customers receive a
+    session link in the confirmation email and should test their microphone
+    beforehand. Onboarding calls are 60 minutes and cover account setup,
+    integrations and best practices. Priority support sessions are a paid
+    add-on with a guaranteed same-day slot. Sessions can be rescheduled free
+    of charge up to 4 hours before the start time.
+dashboardLabels:
+  bookingSingular: Ticket
+  bookingPlural: Tickets
+  customerTerm: Customer
