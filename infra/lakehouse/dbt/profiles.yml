@@ -1,0 +1,21 @@
+# dbt-trino profile for the OpenDesk lakehouse.
+# Dev Trino has no auth (SPEC dev stack); `method: none`.
+# Defaults target Trino on the host port mapping (8088); when running dbt inside the
+# `opendesk` docker network set DBT_TRINO_HOST=trino and DBT_TRINO_PORT=8080.
+opendesk_lakehouse:
+  target: dev
+  outputs:
+    dev:
+      type: trino
+      method: none
+      user: dbt
+      host: "{{ env_var('DBT_TRINO_HOST', 'localhost') }}"
+      port: "{{ env_var('DBT_TRINO_PORT', '8088') | as_number }}"
+      database: iceberg          # Trino catalog = Iceberg REST catalog
+      schema: silver             # default write schema; models override via +schema
+      threads: 4
+      retries: 3
+      timezone: UTC
+      http_scheme: http
+      session_properties:
+        query_max_run_time: 30m
