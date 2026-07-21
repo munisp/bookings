@@ -1,0 +1,42 @@
+# MirrorMaker2 store-and-forward: edge appliance -> central OpenDesk cluster.
+#
+# SKELETON (honest status): requires the Strimzi operator on the edge
+# cluster (https://strimzi.io — open source). This CR runs an MM2 connect
+# cluster that replicates the high-throughput transcript topic from the
+# edge's local Kafka to the central cluster whenever connectivity exists;
+# the local broker retains data while the link is down (store-and-forward).
+#
+# Flow: edge opendesk.transcripts-raw  ->  central opendesk.transcripts-raw
+# (renamed by DefaultTopicRenameGroup? No — identity replication keeps the
+# name; the edge Fluvio connector (infra/fluvio/deploy.sh) is the producer
+# side on the appliance).
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaMirrorMaker2
+metadata:
+  name: edge-to-central
+  namespace: opendesk
+spec:
+  version: 3.7.0
+  replicas: 1
+  # Source = the edge appliance's local Kafka (in-cluster service).
+  connectCluster: central
+  clusters:
+    - alias: edge
+      bootstrapServers: kafka:9092
+    - alias: central
+      bootstrapServers: kafka.central.opendesk.example:9092   # TODO: real endpoint
+      # TLS/SASL to be configured per the secrets runbook (SOPS-managed
+      # credentials) before this is applied anywhere real:
+      # tls: { trustedCertificates: [...] }
+      # authentication: { type: scram-sha-512, ... }
+  mirrors:
+    - sourceCluster: edge
+      targetCluster: central
+      sourceConnector:
+        tasksMax: 2
+        config:
+          replication.factor: 1            # edge MVP: central override per ADR-0008 (rf=3 in prod)
+          offset-syncs.topic.replication.factor: 1
+          sync.topic.acls.enabled: "false"
+      topics: "opendesk.transcripts-raw"   # add opendesk.booking.events etc. as validated
+      groups: ".*"

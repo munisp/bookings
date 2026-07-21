@@ -1,0 +1,86 @@
+# Representative app Deployment for the k3s edge appliance.
+# Image name matches the compose build output (project "opendesk" + service
+# name). Retag/push to a registry reachable from the appliance, or build
+# directly into the k3s containerd (see README).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: identity
+  namespace: opendesk
+  labels:
+    app: identity
+    app.kubernetes.io/part-of: opendesk
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: identity
+  template:
+    metadata:
+      labels:
+        app: identity
+    spec:
+      containers:
+        - name: identity
+          image: opendesk-identity:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 7001
+          env:
+            - name: PORT
+              value: "7001"
+            - name: PG_DSN
+              value: postgres://opendesk:opendesk@postgres:5432
+            - name: PG_DATABASE
+              value: identity
+            - name: DATABASE_URL
+              value: postgres://opendesk:opendesk@postgres:5432/identity
+            - name: KAFKA_BROKERS
+              value: kafka:9092
+            - name: REDIS_ADDR
+              value: redis:6379
+            - name: KEYCLOAK_URL
+              value: http://keycloak:8080
+            - name: PERMIFY_HTTP
+              value: http://permify:3476
+            - name: TEMPORAL_ADDRESS
+              value: temporal:7233
+            - name: TEMPORAL_NAMESPACE
+              value: opendesk
+            - name: TEMPORAL_TASK_QUEUE
+              value: opendesk-main
+            - name: INDUSTRIES_DIR
+              value: /industries
+            # DAPR_HOST/PORTS are set per-pod when the dapr sidecar is
+            # injected; the edge MVP runs without dapr (see README).
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 7001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 7001
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: identity
+  namespace: opendesk
+spec:
+  selector:
+    app: identity
+  ports:
+    - port: 7001
+      targetPort: 7001

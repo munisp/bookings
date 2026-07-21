@@ -1,0 +1,20 @@
+# Kustomize base for the OpenDesk k3s edge appliance (MVP — see README).
+# Three representative app services are included; the remaining services
+# (payments, edge, voice, conversation, knowledge, analytics, crm-sync)
+# follow the exact same Deployment+Service pattern as booking/identity/
+# notification and are added as they are validated on the appliance.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: opendesk
+
+resources:
+  - namespace.yaml
+  - identity-deployment.yaml
+  - booking-deployment.yaml
+  - notification-deployment.yaml
+  - mirror-maker2.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: opendesk
+  app.kubernetes.io/managed-by: kustomize
