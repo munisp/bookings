@@ -1,0 +1,1053 @@
+openapi: 3.0.3
+info:
+  title: OpenDesk booking-service API
+  version: "1.0.0"
+  description: |
+    REST API of `booking-service` (Go, chi) — catalog, team, availability,
+    contacts, bookings, tenant site management, public booking-page
+    endpoints and Temporal saga activity callbacks.
+
+    Generated from `services/booking-service/internal/httpapi/*.go`.
+
+    ## Tenancy & authz
+    * `/v1/*` routes are tenant-scoped. The tenant is resolved from the
+      `X-Tenant-Slug` header (falling back to the first `tenant_slugs` JWT
+      claim). If the bearer token carries `tenant_slugs`, the requested
+      tenant must be among them (403 otherwise).
+    * Mutations enforce a Permify check (SPEC §8) on
+      `organization:{tenant_id}` for subject `user:{JWT sub}`:
+      `manage_catalog` for catalog/team/availability/site writes,
+      `manage_bookings` for contact/booking writes. In dev the service runs
+      with `AUTHZ_DISABLED=true`, which skips the Permify check.
+    * `/public/sites/{slug}/*` routes are unauthenticated; the site slug
+      resolves the tenant server-side (cross-tenant access is impossible by
+      construction).
+    * `/activities/*` and `/internal/*` are service-to-service endpoints
+      invoked via Dapr service invocation (Temporal workers, onboarding
+      workflow). They are not routed through the public gateway.
+
+    ## Errors
+    All errors are `{"error": "<message>"}`. Status mapping: 400 invalid
+    input/UUIDs, 401 missing subject (authz enabled), 403 missing
+    permission/tenant entitlement, 404 not found, 409 conflict (duplicate
+    idempotency key, slot taken), 422 phone-confirmation policy violation,
+    502 authorization service error, 500 internal.
+
+servers:
+  - url: http://localhost:7002
+    description: direct service (dev)
+  - url: http://localhost:9080/api/bookings
+    description: via APISIX gateway
+
+tags:
+  - name: meta
+  - name: catalog
+  - name: team
+  - name: availability
+  - name: contacts
+  - name: bookings
+  - name: site
+  - name: public
+  - name: activities
+  - name: internal
+
+paths:
+  /healthz:
+    get:
+      tags: [meta]
+      summary: Liveness/readiness probe
+      operationId: healthz
+      responses:
+        "200":
+          description: Service healthy (Postgres reachable)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+        "503":
+          description: Database unreachable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/offerings:
+    get:
+      tags: [catalog]
+      summary: List offerings of the tenant
+      operationId: listOfferings
+      parameters: [{ $ref: "#/components/parameters/XTenantSlug" }]
+      responses:
+        "200":
+          description: Offerings ordered by creation time
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  offerings:
+                    type: array
+                    items: { $ref: "#/components/schemas/Offering" }
+    post:
+      tags: [catalog]
+      summary: Create an offering (requires `manage_catalog`)
+      operationId: createOffering
+      parameters: [{ $ref: "#/components/parameters/XTenantSlug" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OfferingRequest" }
+      responses:
+        "201":
+          description: Created offering
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Offering" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/offerings/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/XTenantSlug" }
+      - { $ref: "#/components/parameters/Id" }
+    get:
+      tags: [catalog]
+      summary: Get one offering
+      operationId: getOffering
+      responses:
+        "200":
+          description: The offering
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Offering" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [catalog]
+      summary: Replace an offering (requires `manage_catalog`)
+      operationId: updateOffering
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OfferingRequest" }
+      responses:
+        "200":
+          description: Updated offering
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Offering" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [catalog]
+      summary: Delete an offering (requires `manage_catalog`)
+      operationId: deleteOffering
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/team-members:
+    get:
+      tags: [team]
+      summary: List team members of the tenant
+      operationId: listTeamMembers
+      parameters: [{ $ref: "#/components/parameters/XTenantSlug" }]
+      responses:
+        "200":
+          description: Team members ordered by name
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  team_members:
+                    type: array
+                    items: { $ref: "#/components/schemas/TeamMember" }
+    post:
+      tags: [team]
+      summary: Create a team member (requires `manage_catalog`)
+      operationId: createTeamMember
+      parameters: [{ $ref: "#/components/parameters/XTenantSlug" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TeamMemberRequest" }
+      responses:
+        "201":
+          description: Created team member
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TeamMember" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /v1/team-members/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/XTenantSlug" }
+      - { $ref: "#/components/parameters/Id" }
+    get:
+      tags: [team]
+      summary: Get one team member
+      operationId: getTeamMember
+      responses:
+        "200":
+          description: The team member
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TeamMember" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [team]
+      summary: Replace a team member (requires `manage_catalog`)
+      operationId: updateTeamMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TeamMemberRequest" }
+      responses:
+        "200":
+          description: Updated team member
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TeamMember" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [team]
+      summary: Delete a team member (requires `manage_catalog`)
+      operationId: deleteTeamMember
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/team-members/{id}/availability:
+    parameters:
+      - { $ref: "#/components/parameters/XTenantSlug" }
+      - { $ref: "#/components/parameters/Id" }
+    get:
+      tags: [team, availability]
+      summary: List weekly availability rules of a team member
+      operationId: getAvailabilityRules
+      responses:
+        "200":
+          description: Rules ordered by weekday/start
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rules:
+                    type: array
+                    items: { $ref: "#/components/schemas/AvailabilityRule" }
+    put:
+      tags: [team, availability]
+      summary: Atomically replace all weekly rules of a team member (requires `manage_catalog`)
+      operationId: putAvailability
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rules]
+              properties:
+                rules:
+                  type: array
+                  items: { $ref: "#/components/schemas/AvailabilityRuleInput" }
+      responses:
+        "200":
+          description: The rules that were stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rules:
+                    type: array
+                    items: { $ref: "#/components/schemas/AvailabilityRule" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/availability:
+    get:
+      tags: [availability]
+      summary: Compute open booking slots
+      description: |
+        Computes open slots for one offering + team member in
+        `[from, to)` using the member's weekly rules, existing bookings,
+        offering duration/buffer and capacity, evaluated in the tenant
+        timezone. Ranges beyond 62 days are rejected; a `from` in the past
+        is clamped to now.
+      operationId: getAvailability
+      parameters:
+        - { $ref: "#/components/parameters/XTenantSlug" }
+        - { $ref: "#/components/parameters/QueryOfferingId" }
+        - { $ref: "#/components/parameters/QueryTeamMemberId" }
+        - { $ref: "#/components/parameters/QueryFrom" }
+        - { $ref: "#/components/parameters/QueryTo" }
+      responses:
+        "200":
+          description: Open slots (empty array if the member is inactive)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AvailabilityResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/contacts:
+    get:
+      tags: [contacts]
+      summary: List contacts of the tenant
+      operationId: listContacts
+      parameters: [{ $ref: "#/components/parameters/XTenantSlug" }]
+      responses:
+        "200":
+          description: Contacts ordered by name
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contacts:
+                    type: array
+                    items: { $ref: "#/components/schemas/Contact" }
+    post:
+      tags: [contacts]
+      summary: Create a contact (requires `manage_bookings`)
+      operationId: createContact
+      parameters: [{ $ref: "#/components/parameters/XTenantSlug" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContactRequest" }
+      responses:
+        "201":
+          description: Created contact
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Contact" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /v1/contacts/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/XTenantSlug" }
+      - { $ref: "#/components/parameters/Id" }
+    get:
+      tags: [contacts]
+      summary: Get one contact
+      operationId: getContact
+      responses:
+        "200":
+          description: The contact
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Contact" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [contacts]
+      summary: Replace a contact (requires `manage_bookings`)
+      operationId: updateContact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContactRequest" }
+      responses:
+        "200":
+          description: Updated contact
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Contact" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [contacts]
+      summary: Delete a contact (requires `manage_bookings`)
+      operationId: deleteContact
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/bookings:
+    post:
+      tags: [bookings]
+      summary: Create a booking (requires `manage_bookings`)
+      description: |
+        Creates a pending booking and starts the `BookingSagaWorkflow`
+        (SPEC §6). The phone-confirmation policy is enforced server-side:
+        without a contact phone the command is rejected with 422. When
+        `idempotency_key` is supplied, retries return the original booking.
+        `source` defaults to `api`.
+      operationId: createBooking
+      parameters: [{ $ref: "#/components/parameters/XTenantSlug" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateBookingRequest" }
+      responses:
+        "201":
+          description: Created booking (status `pending`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Booking" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: Slot unavailable or duplicate idempotency key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: Contact phone required (confirmation policy)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    get:
+      tags: [bookings]
+      summary: List bookings of the tenant (newest first)
+      operationId: listBookings
+      parameters:
+        - { $ref: "#/components/parameters/XTenantSlug" }
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, confirmed, cancelled, no_show, completed]
+        - name: team_member_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: from
+          in: query
+          description: RFC3339 lower bound on starts_at
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          description: RFC3339 upper bound on starts_at
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Bookings matching the filter
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bookings:
+                    type: array
+                    items: { $ref: "#/components/schemas/Booking" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /v1/bookings/{id}:
+    get:
+      tags: [bookings]
+      summary: Get one booking
+      operationId: getBooking
+      parameters:
+        - { $ref: "#/components/parameters/XTenantSlug" }
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "200":
+          description: The booking
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Booking" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/bookings/{id}/reschedule:
+    post:
+      tags: [bookings]
+      summary: Reschedule a booking (requires `manage_bookings`)
+      description: Moves the booking to a new start time; emits
+        `BookingRescheduled` via the outbox on success.
+      operationId: rescheduleBooking
+      parameters:
+        - { $ref: "#/components/parameters/XTenantSlug" }
+        - { $ref: "#/components/parameters/Id" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [starts_at]
+              properties:
+                starts_at: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Updated booking
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Booking" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: New slot unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/bookings/{id}/cancel:
+    post:
+      tags: [bookings]
+      summary: Cancel a booking (requires `manage_bookings`)
+      description: Cancels the booking and emits `BookingCancelled` via the
+        outbox. Body is optional.
+      operationId: cancelBooking
+      parameters:
+        - { $ref: "#/components/parameters/XTenantSlug" }
+        - { $ref: "#/components/parameters/Id" }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  default: user_request
+      responses:
+        "200":
+          description: Cancelled booking
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Booking" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/site:
+    get:
+      tags: [site]
+      summary: Get the tenant's public booking site
+      description: |
+        Returns the site backing `/p/{siteSlug}` for the resolved tenant.
+        When no site exists yet, a default one is **auto-created** (slug =
+        tenant slug, display name = tenant name, theme `{}`) and returned.
+      operationId: getSite
+      parameters: [{ $ref: "#/components/parameters/XTenantSlug" }]
+      responses:
+        "200":
+          description: The tenant's site (created on first access)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Site" }
+    put:
+      tags: [site]
+      summary: Update the tenant's public site (requires `manage_catalog`)
+      description: |
+        Partially updates `display_name`, `published` and/or `theme`. The
+        site `slug` is immutable. When no site exists yet, a default is
+        created first (same defaulting as GET). `theme` must be a valid JSON
+        object (stored as jsonb).
+      operationId: updateSite
+      parameters: [{ $ref: "#/components/parameters/XTenantSlug" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateSiteRequest" }
+      responses:
+        "200":
+          description: Updated site
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Site" }
+        "400":
+          description: theme is not valid JSON
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /public/sites/{slug}/context:
+    get:
+      tags: [public]
+      summary: Everything the public booking page needs
+      description: |
+        Unauthenticated. Returns the site record, tenant display context
+        (name/timezone/currency/locale/terminology — resolved via
+        identity-service over Dapr; falls back to `{"slug": ...}` when
+        identity is unreachable), bookable offerings and active team
+        members.
+      operationId: publicContext
+      parameters:
+        - { $ref: "#/components/parameters/SiteSlug" }
+      responses:
+        "200":
+          description: Site + tenant + catalog context
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  site: { $ref: "#/components/schemas/Site" }
+                  tenant:
+                    type: object
+                    additionalProperties: true
+                    description: Tenant context from identity-service
+                  offerings:
+                    type: array
+                    items: { $ref: "#/components/schemas/Offering" }
+                  team_members:
+                    type: array
+                    items: { $ref: "#/components/schemas/TeamMember" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /public/sites/{slug}/availability:
+    get:
+      tags: [public]
+      summary: Compute open slots for the site's tenant
+      description: Unauthenticated; same engine as `GET /v1/availability`,
+        scoped to the tenant that owns the site.
+      operationId: publicAvailability
+      parameters:
+        - { $ref: "#/components/parameters/SiteSlug" }
+        - { $ref: "#/components/parameters/QueryOfferingId" }
+        - { $ref: "#/components/parameters/QueryTeamMemberId" }
+        - { $ref: "#/components/parameters/QueryFrom" }
+        - { $ref: "#/components/parameters/QueryTo" }
+      responses:
+        "200":
+          description: Open slots
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AvailabilityResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /public/sites/{slug}/bookings:
+    post:
+      tags: [public]
+      summary: Create a booking from the public page
+      description: |
+        Unauthenticated. Same payload and policies as `POST /v1/bookings`
+        (including the phone-confirmation policy and idempotency key);
+        `source` is forced to `web` and the tenant is derived from the site.
+      operationId: publicCreateBooking
+      parameters:
+        - { $ref: "#/components/parameters/SiteSlug" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateBookingRequest" }
+      responses:
+        "201":
+          description: Created booking (status `pending`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Booking" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Contact phone required (confirmation policy)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /activities/reserve-slot:
+    post:
+      tags: [activities]
+      summary: Saga activity — validate the slot is still open
+      description: |
+        Invoked by `BookingSagaWorkflow` (ReserveSlot) via Dapr service
+        invocation. Idempotent: returns 200 when the booking is no longer
+        pending. Returns 409 when the slot collides with another booking,
+        which fails the saga and triggers compensation.
+      operationId: activityReserveSlot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActivityRequest" }
+      responses:
+        "200":
+          description: Slot held
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reserved: { type: boolean, example: true }
+                  status: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Slot already taken
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /activities/confirm-booking:
+    post:
+      tags: [activities]
+      summary: Saga activity — confirm the booking
+      description: Marks the booking `confirmed` and writes
+        `BookingConfirmed` to the outbox (idempotent).
+      operationId: activityConfirmBooking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActivityRequest" }
+      responses:
+        "200":
+          description: Confirmed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  confirmed: { type: boolean, example: true }
+                  status: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /activities/release-slot:
+    post:
+      tags: [activities]
+      summary: Saga compensation — release the held slot
+      description: Cancels the pending booking and emits `BookingCancelled`.
+        Default reason is `saga_compensation`.
+      operationId: activityReleaseSlot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActivityRequest" }
+      responses:
+        "200":
+          description: Released
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  released: { type: boolean, example: true }
+                  status: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /activities/mark-no-show:
+    post:
+      tags: [activities]
+      summary: Saga activity — mark booking no-show
+      description: Flips the booking to `no_show` and emits `BookingNoShow`
+        (used by `NoShowFollowupWorkflow`). Idempotent.
+      operationId: activityMarkNoShow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActivityRequest" }
+      responses:
+        "200":
+          description: Marked no-show
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  no_show: { type: boolean, example: true }
+                  status: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /internal/sites:
+    post:
+      tags: [internal]
+      summary: Seed/update the public booking site of a tenant
+      description: Invoked by `TenantOnboardingWorkflow` via Dapr service
+        invocation. Upserts the `sites` row used by `/public/sites/{slug}/*`.
+      operationId: createSiteInternal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant_id, tenant_slug, slug]
+              properties:
+                tenant_id: { type: string, format: uuid }
+                tenant_slug: { type: string, example: acme }
+                slug: { type: string, example: acme }
+                display_name: { type: string, example: Acme Studio }
+      responses:
+        "200":
+          description: The stored site
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Site" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+components:
+  parameters:
+    XTenantSlug:
+      name: X-Tenant-Slug
+      in: header
+      required: false
+      description: Tenant slug; required unless the JWT carries `tenant_slugs`.
+      schema: { type: string, example: acme }
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    SiteSlug:
+      name: slug
+      in: path
+      required: true
+      description: Public site slug (e.g. `acme` for `/p/acme`)
+      schema: { type: string }
+    QueryOfferingId:
+      name: offering_id
+      in: query
+      required: true
+      schema: { type: string, format: uuid }
+    QueryTeamMemberId:
+      name: team_member_id
+      in: query
+      required: true
+      schema: { type: string, format: uuid }
+    QueryFrom:
+      name: from
+      in: query
+      required: true
+      description: RFC3339 range start (clamped to now when in the past)
+      schema: { type: string, format: date-time }
+    QueryTo:
+      name: to
+      in: query
+      required: true
+      description: RFC3339 range end (max 62 days after `from`)
+      schema: { type: string, format: date-time }
+
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Missing permission or tenant not in token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string, example: "not found" }
+
+    Offering:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        duration_min: { type: integer, example: 30 }
+        buffer_min: { type: integer, example: 10 }
+        price_cents: { type: integer, format: int64, example: 3500 }
+        currency: { type: string, example: GBP }
+        capacity: { type: integer, example: 1 }
+        bookable: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    OfferingRequest:
+      type: object
+      required: [name, duration_min]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        duration_min: { type: integer, minimum: 1 }
+        buffer_min: { type: integer, minimum: 0, default: 0 }
+        price_cents: { type: integer, format: int64, minimum: 0 }
+        currency:
+          type: string
+          description: Defaults to the tenant currency
+        capacity: { type: integer, minimum: 0, default: 1 }
+        bookable: { type: boolean, default: true }
+
+    TeamMember:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string }
+        role: { type: string, example: staff }
+        active: { type: boolean }
+
+    TeamMemberRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        email: { type: string }
+        role: { type: string, default: staff }
+        active: { type: boolean, default: true }
+
+    AvailabilityRule:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        team_member_id: { type: string, format: uuid }
+        weekday:
+          type: integer
+          minimum: 0
+          maximum: 6
+          description: 0 = Sunday .. 6 = Saturday
+        start_min:
+          type: integer
+          description: Minutes from midnight (0..1439)
+        end_min:
+          type: integer
+          description: Minutes from midnight (1..1440, must be > start_min)
+        effective_from: { type: string, format: date-time }
+        effective_to: { type: string, format: date-time }
+
+    AvailabilityRuleInput:
+      type: object
+      required: [weekday, start_min, end_min]
+      properties:
+        weekday: { type: integer, minimum: 0, maximum: 6 }
+        start_min: { type: integer, minimum: 0 }
+        end_min: { type: integer, maximum: 1440 }
+        effective_from:
+          type: string
+          description: RFC3339 or YYYY-MM-DD
+        effective_to:
+          type: string
+          description: RFC3339 or YYYY-MM-DD
+
+    Slot:
+      type: object
+      properties:
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+
+    AvailabilityResponse:
+      type: object
+      properties:
+        offering_id: { type: string, format: uuid }
+        team_member_id: { type: string, format: uuid }
+        slots:
+          type: array
+          items: { $ref: "#/components/schemas/Slot" }
+
+    Contact:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        name: { type: string }
+        phone: { type: string }
+        email: { type: string }
+        notes: { type: string }
+
+    ContactRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        phone: { type: string }
+        email: { type: string }
+        notes: { type: string }
+
+    ContactInput:
+      type: object
+      description: Inline contact used when `contact_id` is not supplied.
+        A phone number is required by the confirmation policy.
+      properties:
+        name: { type: string }
+        phone: { type: string }
+        email: { type: string }
+
+    Booking:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        offering_id: { type: string, format: uuid }
+        team_member_id: { type: string, format: uuid }
+        contact_id: { type: string, format: uuid }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        status:
+          type: string
+          enum: [pending, confirmed, cancelled, no_show, completed]
+        source:
+          type: string
+          description: web | voice | chat | api
+        idempotency_key: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateBookingRequest:
+      type: object
+      required: [offering_id, team_member_id, starts_at]
+      properties:
+        offering_id: { type: string, format: uuid }
+        team_member_id: { type: string, format: uuid }
+        contact_id:
+          type: string
+          format: uuid
+          description: Existing contact (mutually exclusive with `contact`)
+        contact: { $ref: "#/components/schemas/ContactInput" }
+        starts_at: { type: string, format: date-time }
+        idempotency_key:
+          type: string
+          description: Makes retries safe; conflicts return the original booking
+        source:
+          type: string
+          description: Defaults to `api` on /v1, forced to `web` on /public
+
+    Site:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        tenant_slug: { type: string }
+        slug: { type: string }
+        display_name: { type: string }
+        published: { type: boolean }
+        theme:
+          type: object
+          additionalProperties: true
+          description: Free-form theme config (jsonb), e.g. colors/logo
+        created_at: { type: string, format: date-time }
+
+    UpdateSiteRequest:
+      type: object
+      description: All fields optional; only supplied fields are updated.
+        The site slug is immutable.
+      properties:
+        display_name: { type: string }
+        published: { type: boolean }
+        theme:
+          type: object
+          additionalProperties: true
+          description: Must be valid JSON; stored as jsonb
+
+    ActivityRequest:
+      type: object
+      required: [booking_id, tenant_id]
+      properties:
+        booking_id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        tenant_slug: { type: string }
+        reason: { type: string }
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Keycloak `opendesk` realm token; `sub` is the Permify
+        subject, `tenant_slugs` constrains accessible tenants.
+
+security: []
