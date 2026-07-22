@@ -1,0 +1,10 @@
+id: clinic-intake-question
+description: Clinic intake question — new patient asks about the intake form.
+site_slug: demo-clinic
+turns:
+- say: Hi, I am a new patient. Do I need to fill in a form before my first visit?
+  expect_tools: []
+  judge: Explains the digital intake form (emailed 72h ahead, ~5 minutes); no medical advice given.
+- say: Can you book me an intake visit next Tuesday morning? My phone is 5559876543.
+  expect_tools: [get_availability]
+  judge: Uses availability before offering times; starts phone-confirmation flow.

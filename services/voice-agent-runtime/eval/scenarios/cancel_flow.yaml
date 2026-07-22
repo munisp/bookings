@@ -1,0 +1,10 @@
+id: cancel-flow
+description: Cancel flow — lookup then cancel with phone confirmation.
+site_slug: demo-salon
+turns:
+- say: I need to cancel my appointment. My number is 5551234567.
+  expect_tools: [lookup_appointment]
+  judge: Looks up bookings by phone; confirmation policy enforced before mutation.
+- say: Yes that's my number. Cancel the first one.
+  expect_tools: [cancel_appointment]
+  judge: Cancellation accepted only with the booking id and confirmed phone.

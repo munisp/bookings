@@ -1,0 +1,16 @@
+id: salon-booking-happy
+description: Salon booking happy path — info, availability, phone-confirmed booking.
+site_slug: demo-salon
+turns:
+- say: What services do you offer?
+  expect_tools: [get_business_info]
+  judge: Reply lists real catalog services with prices and does not invent offerings.
+- say: When is Maria free for a haircut this week?
+  expect_tools: [get_availability]
+  judge: Reply quotes actual slots from the tool in the business timezone.
+- say: Book me Friday at 10 with Maria, my phone is 5551234567
+  expect_tools: [book_appointment]
+  judge: Agent reads the phone number back and asks for explicit confirmation.
+- say: Yes, that number is correct.
+  expect_tools: [book_appointment]
+  judge: Booking is accepted only after confirmation; agent confirms details warmly.

@@ -1,0 +1,7 @@
+id: escalation-request
+description: Escalation request — caller asks for a human (warm handoff).
+site_slug: demo-clinic
+turns:
+- say: This is the third time I'm calling, I'm furious. I want to speak to a human now.
+  expect_tools: [request_human]
+  judge: Agent escalates calmly, confirms a staff member is notified, and stays available meanwhile.
