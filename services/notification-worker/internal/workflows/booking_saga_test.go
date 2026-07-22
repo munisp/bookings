@@ -22,8 +22,8 @@ func registerSagaStubs(env *testsuite.TestWorkflowEnvironment) {
 		activity.RegisterOptions{Name: ActivityHoldDeposit})
 	env.RegisterActivityWithOptions(func(ctx context.Context, in SagaInput) error { return nil },
 		activity.RegisterOptions{Name: ActivityConfirmBooking})
-	env.RegisterActivityWithOptions(func(ctx context.Context, in SagaInput) error { return nil },
-		activity.RegisterOptions{Name: ActivitySendConfirmation})
+	env.RegisterActivityWithOptions(func(ctx context.Context, req PacedSendRequest) error { return nil },
+		activity.RegisterOptions{Name: ActivityNotifyPaced})
 	env.RegisterActivityWithOptions(func(ctx context.Context, in SagaInput, reason string) error { return nil },
 		activity.RegisterOptions{Name: ActivityReleaseSlot})
 	env.RegisterActivityWithOptions(func(ctx context.Context, in SagaInput, holdID string) error { return nil },
@@ -74,8 +74,13 @@ func TestBookingSagaWorkflow_HappyPath(t *testing.T) {
 		Run(track("hold")).Return("hold-1", nil).Once()
 	env.OnActivity(ActivityConfirmBooking, mock.Anything, mock.Anything).
 		Run(track("confirm")).Return(nil).Once()
-	env.OnActivity(ActivitySendConfirmation, mock.Anything, mock.Anything).
-		Run(track("notify")).Return(nil).Once()
+	// The confirmation is CPS-paced: the saga must call NotifyPaced with the
+	// confirmation kind carrying the full saga input.
+	env.OnActivity(ActivityNotifyPaced, mock.Anything, mock.MatchedBy(func(req PacedSendRequest) bool {
+		return req.Kind == PacedSendConfirmation && req.Confirmation != nil &&
+			req.Confirmation.Input.BookingID == "b-1" &&
+			req.Confirmation.Input.ContactEmail == "jane@example.com"
+	})).Run(track("notify")).Return(nil).Once()
 
 	env.ExecuteWorkflow(BookingSagaWorkflow, sagaTestInput())
 	require.True(t, env.IsWorkflowCompleted())

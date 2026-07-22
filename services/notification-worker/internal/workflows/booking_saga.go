@@ -162,9 +162,12 @@ func BookingSagaWorkflow(ctx workflow.Context, in SagaInput) error {
 	}
 
 	// Step 4: SendConfirmation (non-compensable; failure does not roll back a
-	// confirmed booking — notification retries via its own retry policy)
+	// confirmed booking — notification retries via its own retry policy).
+	// Outbound send: route through NotifyPaced (CPS token + sender rotation)
+	// like every other workflow-driven notification.
 	state = "sending-confirmation"
-	if err := workflow.ExecuteActivity(ctx, ActivitySendConfirmation, in).Get(ctx, nil); err != nil {
+	confirmReq := PacedSendRequest{Kind: PacedSendConfirmation, Confirmation: &PacedConfirmationSend{Input: in}}
+	if err := workflow.ExecuteActivity(ctx, ActivityNotifyPaced, confirmReq).Get(ctx, nil); err != nil {
 		logger.Error("SendConfirmation failed; booking remains confirmed", "error", err)
 		state = "confirmed:notification-failed"
 	} else {
