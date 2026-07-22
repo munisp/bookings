@@ -56,10 +56,26 @@ func TestNotifyPacedDispatchValidation(t *testing.T) {
 	require.ErrorContains(t, a.NotifyPaced(ctx, workflows.PacedSendRequest{Kind: workflows.PacedSendReminder}), "missing reminder payload")
 	require.ErrorContains(t, a.NotifyPaced(ctx, workflows.PacedSendRequest{Kind: workflows.PacedSendDepositReminder}), "missing deposit payload")
 	require.ErrorContains(t, a.NotifyPaced(ctx, workflows.PacedSendRequest{Kind: workflows.PacedSendNoShow}), "missing noshow payload")
+	require.ErrorContains(t, a.NotifyPaced(ctx, workflows.PacedSendRequest{Kind: workflows.PacedSendConfirmation}), "missing confirmation payload")
+	require.ErrorContains(t, a.NotifyPaced(ctx, workflows.PacedSendRequest{Kind: workflows.PacedSendIntakeReminder}), "missing intake payload")
+	require.ErrorContains(t, a.NotifyPaced(ctx, workflows.PacedSendRequest{Kind: workflows.PacedSendFollowUp}), "missing follow_up payload")
+	require.ErrorContains(t, a.NotifyPaced(ctx, workflows.PacedSendRequest{Kind: workflows.PacedSendProposalReminder}), "missing proposal payload")
+	require.ErrorContains(t, a.NotifyPaced(ctx, workflows.PacedSendRequest{Kind: workflows.PacedSendStaffAlert}), "missing staff_alert payload")
 
 	// Valid reminder dispatch (no recipients → no binding calls).
 	require.NoError(t, a.NotifyPaced(ctx, workflows.PacedSendRequest{
 		Kind:     workflows.PacedSendReminder,
 		Reminder: &workflows.PacedReminderSend{Input: workflows.ReminderInput{BookingID: "b-1"}, Kind: "24h0m0s"},
+	}))
+}
+
+// New-kind dispatch: a confirmation request with no recipients renders the
+// template and skips both bindings, exercising the SendConfirmation dispatch
+// without a Dapr sidecar.
+func TestNotifyPacedDispatchesConfirmation(t *testing.T) {
+	a := pacedTestActivities(nil)
+	require.NoError(t, a.NotifyPaced(context.Background(), workflows.PacedSendRequest{
+		Kind:         workflows.PacedSendConfirmation,
+		Confirmation: &workflows.PacedConfirmationSend{Input: workflows.SagaInput{BookingID: "b-1", TenantSlug: "acme"}},
 	}))
 }

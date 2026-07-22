@@ -47,6 +47,31 @@ func (a *Activities) NotifyPaced(ctx context.Context, req workflows.PacedSendReq
 			return fmt.Errorf("NotifyPaced %s: missing noshow payload", req.Kind)
 		}
 		return a.SendNoShowFollowup(ctx, req.NoShow.Input)
+	case workflows.PacedSendConfirmation:
+		if req.Confirmation == nil {
+			return fmt.Errorf("NotifyPaced %s: missing confirmation payload", req.Kind)
+		}
+		return a.SendConfirmation(ctx, req.Confirmation.Input)
+	case workflows.PacedSendIntakeReminder:
+		if req.Intake == nil {
+			return fmt.Errorf("NotifyPaced %s: missing intake payload", req.Kind)
+		}
+		return a.SendIntakeReminder(ctx, req.Intake.Input)
+	case workflows.PacedSendFollowUp:
+		if req.FollowUp == nil {
+			return fmt.Errorf("NotifyPaced %s: missing follow_up payload", req.Kind)
+		}
+		return a.SendFollowupEmail(ctx, req.FollowUp.Input)
+	case workflows.PacedSendProposalReminder:
+		if req.Proposal == nil {
+			return fmt.Errorf("NotifyPaced %s: missing proposal payload", req.Kind)
+		}
+		return a.SendProposalReminder(ctx, req.Proposal.Input)
+	case workflows.PacedSendStaffAlert:
+		if req.StaffAlert == nil {
+			return fmt.Errorf("NotifyPaced %s: missing staff_alert payload", req.Kind)
+		}
+		return a.EscalateTicket(ctx, req.StaffAlert.Input)
 	default:
 		return fmt.Errorf("NotifyPaced: unknown send kind %q", req.Kind)
 	}

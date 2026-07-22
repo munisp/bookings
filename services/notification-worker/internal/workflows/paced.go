@@ -22,16 +22,36 @@ const (
 	// PacedSendNoShow routes to SendNoShowFollowup (SPEC §6 no-show
 	// follow-up message).
 	PacedSendNoShow = "noshow_followup"
+	// PacedSendConfirmation routes to SendConfirmation (booking saga step 4:
+	// email + SMS confirmation after ConfirmBooking).
+	PacedSendConfirmation = "confirmation"
+	// PacedSendIntakeReminder routes to SendIntakeReminder (clinic pack:
+	// T-72h intake form link).
+	PacedSendIntakeReminder = "intake_reminder"
+	// PacedSendFollowUp routes to SendFollowupEmail (consultancy pack:
+	// post-session follow-up).
+	PacedSendFollowUp = "follow_up"
+	// PacedSendProposalReminder routes to SendProposalReminder (consultancy
+	// pack: T+7d proposal-due reminder to staff).
+	PacedSendProposalReminder = "proposal_reminder"
+	// PacedSendStaffAlert routes to EscalateTicket (support-desk pack:
+	// SLA-breach escalation email + CRM priority event).
+	PacedSendStaffAlert = "staff_alert"
 )
 
 // PacedSendRequest is the payload of the NotifyPaced activity: which send
 // to perform after the CPS token is granted, plus its arguments.
 type PacedSendRequest struct {
-	Kind     string                    `json:"kind"` // PacedSend* constant
-	Waitlist *PacedWaitlistSend        `json:"waitlist,omitempty"`
-	Reminder *PacedReminderSend        `json:"reminder,omitempty"`
-	Deposit  *PacedDepositReminderSend `json:"deposit,omitempty"`
-	NoShow   *PacedNoShowSend          `json:"noshow,omitempty"`
+	Kind         string                     `json:"kind"` // PacedSend* constant
+	Waitlist     *PacedWaitlistSend         `json:"waitlist,omitempty"`
+	Reminder     *PacedReminderSend         `json:"reminder,omitempty"`
+	Deposit      *PacedDepositReminderSend  `json:"deposit,omitempty"`
+	NoShow       *PacedNoShowSend           `json:"noshow,omitempty"`
+	Confirmation *PacedConfirmationSend     `json:"confirmation,omitempty"`
+	Intake       *PacedIntakeReminderSend   `json:"intake,omitempty"`
+	FollowUp     *PacedFollowupSend         `json:"follow_up,omitempty"`
+	Proposal     *PacedProposalReminderSend `json:"proposal,omitempty"`
+	StaffAlert   *PacedStaffAlertSend       `json:"staff_alert,omitempty"`
 }
 
 // PacedWaitlistSend carries the SendWaitlistClaimNotification arguments.
@@ -54,4 +74,29 @@ type PacedDepositReminderSend struct {
 // PacedNoShowSend carries the SendNoShowFollowup arguments.
 type PacedNoShowSend struct {
 	Input NoShowInput `json:"input"`
+}
+
+// PacedConfirmationSend carries the SendConfirmation arguments.
+type PacedConfirmationSend struct {
+	Input SagaInput `json:"input"`
+}
+
+// PacedIntakeReminderSend carries the SendIntakeReminder arguments.
+type PacedIntakeReminderSend struct {
+	Input ClinicIntakeInput `json:"input"`
+}
+
+// PacedFollowupSend carries the SendFollowupEmail arguments.
+type PacedFollowupSend struct {
+	Input ConsultancyFollowupInput `json:"input"`
+}
+
+// PacedProposalReminderSend carries the SendProposalReminder arguments.
+type PacedProposalReminderSend struct {
+	Input ConsultancyFollowupInput `json:"input"`
+}
+
+// PacedStaffAlertSend carries the EscalateTicket arguments.
+type PacedStaffAlertSend struct {
+	Input SupportEscalationInput `json:"input"`
 }
