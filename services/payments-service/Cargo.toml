@@ -1,0 +1,31 @@
+[package]
+name = "payments-service"
+version = "0.1.0"
+edition = "2021"
+description = "OpenDesk payments service: TigerBeetle-compatible ledger + Mojaloop rails (SPEC §9)"
+
+[features]
+# Default build uses the in-memory double-entry SimLedgerClient (ADR-0007 fallback).
+# `tb-live` compiles the real TigerBeetle client (see src/ledger/tigerbeetle.rs).
+default = []
+tb-live = ["dep:tigerbeetle-unofficial"]
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rdkafka = { version = "0.36", features = ["cmake-build"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+thiserror = "1"
+# Gated behind `tb-live`; the community-published official Rust client for
+# TigerBeetle. Only used when LEDGER_IMPL=tigerbeetle and built with --features tb-live.
+tigerbeetle-unofficial = { version = "0.8", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
