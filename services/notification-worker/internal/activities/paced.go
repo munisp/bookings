@@ -37,6 +37,16 @@ func (a *Activities) NotifyPaced(ctx context.Context, req workflows.PacedSendReq
 			return fmt.Errorf("NotifyPaced %s: missing reminder payload", req.Kind)
 		}
 		return a.SendReminder(ctx, req.Reminder.Input, req.Reminder.Kind)
+	case workflows.PacedSendDepositReminder:
+		if req.Deposit == nil {
+			return fmt.Errorf("NotifyPaced %s: missing deposit payload", req.Kind)
+		}
+		return a.SendDepositReminder(ctx, req.Deposit.Input)
+	case workflows.PacedSendNoShow:
+		if req.NoShow == nil {
+			return fmt.Errorf("NotifyPaced %s: missing noshow payload", req.Kind)
+		}
+		return a.SendNoShowFollowup(ctx, req.NoShow.Input)
 	default:
 		return fmt.Errorf("NotifyPaced: unknown send kind %q", req.Kind)
 	}

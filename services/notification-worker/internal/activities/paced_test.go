@@ -54,6 +54,8 @@ func TestNotifyPacedDispatchValidation(t *testing.T) {
 	require.ErrorContains(t, a.NotifyPaced(ctx, workflows.PacedSendRequest{Kind: "bogus"}), "unknown send kind")
 	require.ErrorContains(t, a.NotifyPaced(ctx, workflows.PacedSendRequest{Kind: workflows.PacedSendWaitlistClaim}), "missing waitlist payload")
 	require.ErrorContains(t, a.NotifyPaced(ctx, workflows.PacedSendRequest{Kind: workflows.PacedSendReminder}), "missing reminder payload")
+	require.ErrorContains(t, a.NotifyPaced(ctx, workflows.PacedSendRequest{Kind: workflows.PacedSendDepositReminder}), "missing deposit payload")
+	require.ErrorContains(t, a.NotifyPaced(ctx, workflows.PacedSendRequest{Kind: workflows.PacedSendNoShow}), "missing noshow payload")
 
 	// Valid reminder dispatch (no recipients → no binding calls).
 	require.NoError(t, a.NotifyPaced(ctx, workflows.PacedSendRequest{
