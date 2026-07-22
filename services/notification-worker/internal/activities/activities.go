@@ -1,0 +1,296 @@
+// Package activities implements the Temporal activities invoked by the
+// workflows of SPEC §6. Cross-service calls go through Dapr service
+// invocation; notifications go through the Dapr output bindings
+// bindings-smtp and bindings-twilio (operation create).
+package activities
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"net/http"
+	"strings"
+	"text/template"
+	"time"
+
+	"github.com/opendesk/notification-worker/internal/daprc"
+	"github.com/opendesk/notification-worker/internal/packs"
+	"github.com/opendesk/notification-worker/internal/workflows"
+	"go.uber.org/zap"
+)
+
+// IndustryDeps bundles the SPEC-CRM §C2 dependencies: the loaded industry
+// packs and the Dapr app-ids/topics the pack activities talk to.
+type IndustryDeps struct {
+	Packs          *packs.Registry // loaded from INDUSTRIES_DIR (may be empty)
+	KnowledgeAppID string          // Dapr app-id of knowledge-service
+	CRMSyncAppID   string          // Dapr app-id of crm-sync-service
+	PubSubName     string          // Dapr pubsub component for CRM events
+	CRMEventsTopic string          // topic for escalation priority flags
+}
+
+// Activities bundles the dependencies shared by all activity methods.
+type Activities struct {
+	Dapr          *daprc.Client
+	BookingAppID  string
+	PaymentsAppID string
+	IdentityAppID string
+	SMTPBinding   string
+	TwilioBinding string
+	SMTPFrom      string
+	TwilioFrom    string
+	OpenSearchURL string
+	Industry      IndustryDeps
+	// Gdpr holds the GDPR export/erase configuration; set by main after New.
+	Gdpr GdprDeps
+	// PublicBaseURL is the user-facing base for claim links
+	// (PUBLIC_BASE_URL); set by main after New.
+	PublicBaseURL string
+	Log           *zap.Logger
+
+	hc *http.Client
+}
+
+// New builds the activity set.
+func New(d *daprc.Client, bookingAppID, paymentsAppID, identityAppID, smtpBinding, twilioBinding, smtpFrom, twilioFrom, osURL string, ind IndustryDeps, log *zap.Logger) *Activities {
+	return &Activities{
+		Dapr:          d,
+		BookingAppID:  bookingAppID,
+		PaymentsAppID: paymentsAppID,
+		IdentityAppID: identityAppID,
+		SMTPBinding:   smtpBinding,
+		TwilioBinding: twilioBinding,
+		SMTPFrom:      smtpFrom,
+		TwilioFrom:    twilioFrom,
+		OpenSearchURL: strings.TrimRight(osURL, "/"),
+		Industry:      ind,
+		Log:           log,
+		hc:            &http.Client{Timeout: 15 * time.Second},
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Booking saga activities (booking-svc / payments-svc via Dapr invocation)
+// ---------------------------------------------------------------------------
+
+type activityCallback struct {
+	BookingID  string `json:"booking_id"`
+	TenantID   string `json:"tenant_id"`
+	TenantSlug string `json:"tenant_slug"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+// ReserveSlot asks booking-service to hold the pending booking's slot.
+func (a *Activities) ReserveSlot(ctx context.Context, in workflows.SagaInput) error {
+	return a.Dapr.InvokeService(ctx, a.BookingAppID, "activities/reserve-slot", activityCallback{
+		BookingID: in.BookingID, TenantID: in.TenantID, TenantSlug: in.TenantSlug,
+	}, nil)
+}
+
+// ReleaseSlot is the compensation of ReserveSlot.
+func (a *Activities) ReleaseSlot(ctx context.Context, in workflows.SagaInput, reason string) error {
+	return a.Dapr.InvokeService(ctx, a.BookingAppID, "activities/release-slot", activityCallback{
+		BookingID: in.BookingID, TenantID: in.TenantID, TenantSlug: in.TenantSlug, Reason: reason,
+	}, nil)
+}
+
+// ConfirmBooking marks the booking confirmed (emits BookingConfirmed).
+func (a *Activities) ConfirmBooking(ctx context.Context, in workflows.SagaInput) error {
+	return a.Dapr.InvokeService(ctx, a.BookingAppID, "activities/confirm-booking", activityCallback{
+		BookingID: in.BookingID, TenantID: in.TenantID, TenantSlug: in.TenantSlug,
+	}, nil)
+}
+
+// HoldDeposit places a deposit hold in payments-service; returns the hold ID.
+// Calls the real payments-service activity route (Dapr app-id `payments`).
+// The held amount is the pack deposit (ceil(price * depositPercent/100)) when
+// the tenant's bookingPolicy was resolved, otherwise the full price
+// (SPEC-CRM §C3).
+func (a *Activities) HoldDeposit(ctx context.Context, in workflows.SagaInput) (string, error) {
+	var out struct {
+		HoldID string `json:"hold_id"`
+	}
+	err := a.Dapr.InvokeService(ctx, a.PaymentsAppID, "activities/hold-deposit", map[string]any{
+		"booking_id":   in.BookingID,
+		"tenant_id":    in.TenantID,
+		"amount_cents": depositAmountCents(in),
+		"currency":     in.Currency,
+	}, &out)
+	if err != nil {
+		return "", err
+	}
+	if out.HoldID == "" {
+		return "", fmt.Errorf("payments hold-deposit returned empty hold_id")
+	}
+	return out.HoldID, nil
+}
+
+// depositAmountCents resolves the amount to hold: the pack deposit when the
+// bookingPolicy was resolved by booking-service, full price otherwise.
+func depositAmountCents(in workflows.SagaInput) int64 {
+	if in.DepositKnown {
+		return in.DepositCents
+	}
+	return in.PriceCents
+}
+
+// VoidHold is the compensation of HoldDeposit.
+func (a *Activities) VoidHold(ctx context.Context, in workflows.SagaInput, holdID string) error {
+	return a.Dapr.InvokeService(ctx, a.PaymentsAppID, "activities/void-hold", map[string]any{
+		"hold_id":    holdID,
+		"booking_id": in.BookingID,
+		"tenant_id":  in.TenantID,
+	}, nil)
+}
+
+// GetBookingStatus fetches the current booking status from booking-service.
+// Uses HTTP GET on the invoke path (booking's route is GET /v1/bookings/{id}).
+func (a *Activities) GetBookingStatus(ctx context.Context, bookingID, tenantSlug string) (string, error) {
+	var out struct {
+		Status string `json:"status"`
+	}
+	err := a.Dapr.InvokeServiceMethod(ctx, http.MethodGet, a.BookingAppID, "v1/bookings/"+bookingID, nil,
+		map[string]string{"X-Tenant-Slug": tenantSlug}, &out)
+	if err != nil {
+		return "", err
+	}
+	return out.Status, nil
+}
+
+// MarkNoShow flips the booking to no_show via the booking activity endpoint.
+func (a *Activities) MarkNoShow(ctx context.Context, in workflows.NoShowInput) error {
+	return a.Dapr.InvokeService(ctx, a.BookingAppID, "activities/mark-no-show", activityCallback{
+		BookingID: in.BookingID, TenantID: in.TenantID, TenantSlug: in.TenantSlug,
+	}, nil)
+}
+
+// ---------------------------------------------------------------------------
+// Notification activities (Dapr output bindings)
+// ---------------------------------------------------------------------------
+
+type templateData struct {
+	Name     string
+	StartsAt string
+	Kind     string
+	Tenant   string
+}
+
+var confirmationEmail = template.Must(template.New("confirm").Parse(
+	`Hi {{.Name}}, your appointment with {{.Tenant}} is confirmed for {{.StartsAt}}. We look forward to seeing you!`))
+
+var reminderEmail = template.Must(template.New("reminder").Parse(
+	`Hi {{.Name}}, this is a reminder ({{.Kind}}) of your appointment with {{.Tenant}} at {{.StartsAt}}.`))
+
+var noShowEmail = template.Must(template.New("noshow").Parse(
+	`Hi {{.Name}}, we missed you at your appointment with {{.Tenant}} today. Reply to rebook at a time that suits you.`))
+
+// Industry pack templates (SPEC-CRM §C2). Kind carries the per-template
+// payload (intake form link, deposit amount, SLA, ...).
+var intakeEmail = template.Must(template.New("intake").Parse(
+	`Hi {{.Name}}, ahead of your visit with {{.Tenant}} on {{.StartsAt}}, please complete your intake form (about 5 minutes): {{.Kind}}`))
+
+var depositReminderEmail = template.Must(template.New("deposit").Parse(
+	`Hi {{.Name}}, your appointment with {{.Tenant}} on {{.StartsAt}} is inside the cancellation window and the deposit is still outstanding. Please complete the deposit to keep your slot.`))
+
+var followupEmail = template.Must(template.New("followup").Parse(
+	`Hi {{.Name}}, thank you for your session with {{.Tenant}}. We will follow up with notes and a tailored proposal within 7 days. Reply to this email with anything you would like us to include.`))
+
+var proposalReminderEmail = template.Must(template.New("proposal").Parse(
+	`Reminder ({{.Tenant}}): the tailored proposal for {{.Name}} (session on {{.StartsAt}}) is due. Please send it today.`))
+
+var escalationEmail = template.Must(template.New("escalation").Parse(
+	`SLA breach ({{.Tenant}}): the ticket from {{.Name}} opened at {{.StartsAt}} has passed the {{.Kind}} first-response SLA without a reply. It has been flagged as priority in the CRM.`))
+
+// SendConfirmation sends the booking confirmation via email + SMS bindings.
+func (a *Activities) SendConfirmation(ctx context.Context, in workflows.SagaInput) error {
+	td := templateData{Name: in.ContactName, StartsAt: in.StartsAt.Format(time.RFC1123), Kind: "confirmation", Tenant: in.TenantSlug}
+	return a.notify(ctx, td, in.ContactEmail, in.ContactPhone, "Appointment confirmed", confirmationEmail)
+}
+
+// SendReminder sends a T-24h / T-1h reminder.
+func (a *Activities) SendReminder(ctx context.Context, in workflows.ReminderInput, kind string) error {
+	td := templateData{Name: in.ContactName, StartsAt: in.StartsAt.Format(time.RFC1123), Kind: kind, Tenant: in.TenantSlug}
+	return a.notify(ctx, td, in.ContactEmail, in.ContactPhone, "Appointment reminder "+kind, reminderEmail)
+}
+
+// SendNoShowFollowup sends the no-show follow-up message.
+func (a *Activities) SendNoShowFollowup(ctx context.Context, in workflows.NoShowInput) error {
+	td := templateData{Name: "there", StartsAt: in.EndsAt.Format(time.RFC1123), Kind: "no-show", Tenant: in.TenantSlug}
+	return a.notify(ctx, td, in.ContactEmail, in.ContactPhone, "We missed you", noShowEmail)
+}
+
+// notify renders the template and dispatches to the SMTP and Twilio output
+// bindings (operation create). A missing recipient channel is skipped.
+func (a *Activities) notify(ctx context.Context, td templateData, email, phone, subject string, tpl *template.Template) error {
+	var body bytes.Buffer
+	if err := tpl.Execute(&body, td); err != nil {
+		return fmt.Errorf("render template: %w", err)
+	}
+	text := body.String()
+
+	if email != "" {
+		if err := a.Dapr.InvokeBinding(ctx, a.SMTPBinding, "create", text, map[string]string{
+			"emailTo":   email,
+			"emailFrom": a.SMTPFrom,
+			"subject":   subject,
+		}); err != nil {
+			return fmt.Errorf("smtp binding: %w", err)
+		}
+	}
+	if phone != "" {
+		if err := a.Dapr.InvokeBinding(ctx, a.TwilioBinding, "create", text, map[string]string{
+			"toNumber":   phone,
+			"fromNumber": a.TwilioFrom,
+		}); err != nil {
+			return fmt.Errorf("twilio binding: %w", err)
+		}
+	}
+	a.Log.Info("notification sent", zap.String("subject", subject), zap.String("email", email), zap.String("phone", phone))
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Tenant onboarding activities
+// ---------------------------------------------------------------------------
+
+// EnsureKeycloakGroup (idempotent) asks identity-service to ensure
+// /tenants/{slug} exists.
+func (a *Activities) EnsureKeycloakGroup(ctx context.Context, in workflows.OnboardingInput) error {
+	return a.Dapr.InvokeService(ctx, a.IdentityAppID, "internal/tenants/"+in.Slug+"/ensure-group", map[string]any{}, nil)
+}
+
+// EnsurePermifyTenant (idempotent) ensures the Permify tenant exists.
+func (a *Activities) EnsurePermifyTenant(ctx context.Context, in workflows.OnboardingInput) error {
+	return a.Dapr.InvokeService(ctx, a.IdentityAppID, "internal/tenants/"+in.Slug+"/ensure-permify", map[string]any{}, nil)
+}
+
+// SeedTenantData asks booking-service to seed the tenant's default public
+// site row (the /p/{slug} booking page).
+func (a *Activities) SeedTenantData(ctx context.Context, in workflows.OnboardingInput) error {
+	return a.Dapr.InvokeService(ctx, a.BookingAppID, "internal/sites", map[string]any{
+		"tenant_id":    in.TenantID,
+		"tenant_slug":  in.Slug,
+		"slug":         in.Slug,
+		"display_name": in.Name,
+	}, nil)
+}
+
+// EnsureSearchAlias creates the per-tenant OpenSearch alias kb-{slug} over
+// the shared kb-chunks index (SPEC §10).
+func (a *Activities) EnsureSearchAlias(ctx context.Context, in workflows.OnboardingInput) error {
+	alias := "kb-" + in.Slug
+	url := fmt.Sprintf("%s/kb-chunks/_alias/%s", a.OpenSearchURL, alias)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := a.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("opensearch alias %s: %w", alias, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("opensearch alias %s: status %d", alias, resp.StatusCode)
+	}
+	return nil
+}
