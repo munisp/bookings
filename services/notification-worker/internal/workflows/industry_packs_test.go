@@ -16,8 +16,8 @@ import (
 func registerPackStubs(env *testsuite.TestWorkflowEnvironment) {
 	env.RegisterActivityWithOptions(func(ctx context.Context, in SalonDepositInput) (bool, error) { return true, nil },
 		activity.RegisterOptions{Name: ActivityVerifyDepositHold})
-	env.RegisterActivityWithOptions(func(ctx context.Context, in SalonDepositInput) error { return nil },
-		activity.RegisterOptions{Name: ActivitySendDepositReminder})
+	env.RegisterActivityWithOptions(func(ctx context.Context, req PacedSendRequest) error { return nil },
+		activity.RegisterOptions{Name: ActivityNotifyPaced})
 	env.RegisterActivityWithOptions(func(ctx context.Context, in SalonDepositInput) error { return nil },
 		activity.RegisterOptions{Name: ActivityChargeNoShowFee})
 	env.RegisterActivityWithOptions(func(ctx context.Context, in ClinicIntakeInput) error { return nil },
@@ -150,8 +150,9 @@ func TestSalonDepositWorkflow_ReminderWhenDepositMissing(t *testing.T) {
 	}
 	env.OnActivity(ActivityVerifyDepositHold, mock.Anything, mock.Anything).
 		Run(track("verify")).Return(false, nil).Once()
-	env.OnActivity(ActivitySendDepositReminder, mock.Anything, mock.Anything).
-		Run(track("deposit-reminder")).Return(nil).Once()
+	env.OnActivity(ActivityNotifyPaced, mock.Anything, mock.MatchedBy(func(req PacedSendRequest) bool {
+		return req.Kind == PacedSendDepositReminder && req.Deposit != nil && req.Deposit.Input.BookingID == in.BookingID
+	})).Run(track("deposit-reminder")).Return(nil).Once()
 
 	env.ExecuteWorkflow(SalonDepositWorkflow, in)
 	require.True(t, env.IsWorkflowCompleted())
