@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/opendesk/notification-worker/internal/daprc"
+	"github.com/opendesk/notification-worker/internal/pacer"
 	"github.com/opendesk/notification-worker/internal/packs"
 	"github.com/opendesk/notification-worker/internal/workflows"
 	"go.uber.org/zap"
@@ -46,7 +47,10 @@ type Activities struct {
 	// PublicBaseURL is the user-facing base for claim links
 	// (PUBLIC_BASE_URL); set by main after New.
 	PublicBaseURL string
-	Log           *zap.Logger
+	// Pacer is the outbound CPS limiter + sender rotator (VOICE-SCALING §4);
+	// set by main after New. Nil disables pacing/rotation (tests).
+	Pacer *pacer.Pacer
+	Log   *zap.Logger
 
 	hc *http.Client
 }
@@ -221,6 +225,12 @@ func (a *Activities) SendNoShowFollowup(ctx context.Context, in workflows.NoShow
 
 // notify renders the template and dispatches to the SMTP and Twilio output
 // bindings (operation create). A missing recipient channel is skipped.
+//
+// Sender rotation (VOICE-SCALING §4): when the pacer has an
+// OUTBOUND_FROM_NUMBERS pool, the next round-robin number replaces the
+// default Twilio sender and is recorded in the binding payload metadata of
+// both channels ("senderNumber"), so every outbound message carries the
+// originating number for reputation tracing.
 func (a *Activities) notify(ctx context.Context, td templateData, email, phone, subject string, tpl *template.Template) error {
 	var body bytes.Buffer
 	if err := tpl.Execute(&body, td); err != nil {
@@ -228,24 +238,34 @@ func (a *Activities) notify(ctx context.Context, td templateData, email, phone, 
 	}
 	text := body.String()
 
+	sender := a.TwilioFrom
+	if a.Pacer != nil {
+		if n := a.Pacer.NextSender(ctx); n != "" {
+			sender = n
+		}
+	}
+
 	if email != "" {
 		if err := a.Dapr.InvokeBinding(ctx, a.SMTPBinding, "create", text, map[string]string{
-			"emailTo":   email,
-			"emailFrom": a.SMTPFrom,
-			"subject":   subject,
+			"emailTo":      email,
+			"emailFrom":    a.SMTPFrom,
+			"subject":      subject,
+			"senderNumber": sender,
 		}); err != nil {
 			return fmt.Errorf("smtp binding: %w", err)
 		}
 	}
 	if phone != "" {
 		if err := a.Dapr.InvokeBinding(ctx, a.TwilioBinding, "create", text, map[string]string{
-			"toNumber":   phone,
-			"fromNumber": a.TwilioFrom,
+			"toNumber":     phone,
+			"fromNumber":   sender,
+			"senderNumber": sender,
 		}); err != nil {
 			return fmt.Errorf("twilio binding: %w", err)
 		}
 	}
-	a.Log.Info("notification sent", zap.String("subject", subject), zap.String("email", email), zap.String("phone", phone))
+	a.Log.Info("notification sent", zap.String("subject", subject), zap.String("email", email),
+		zap.String("phone", phone), zap.String("sender_number", sender))
 	return nil
 }
 
