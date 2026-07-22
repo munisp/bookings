@@ -110,6 +110,24 @@ upstreams:
         healthy: {http_statuses: [200, 201, 204, 301, 302, 400, 401, 403, 404]}
         unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
 
+  - id: notification
+    type: roundrobin
+    nodes:
+      "notification:7003": 1
+    retries: 1
+    timeout: {connect: 5, send: 30, read: 30}
+    checks:
+      active:
+        type: http
+        http_path: /healthz
+        healthy: {interval: 5, successes: 1, http_statuses: [200]}
+        unhealthy: {interval: 5, http_failures: 2, http_statuses: [500, 502, 503, 504]}
+        timeout: 2
+      passive:
+        type: http
+        healthy: {http_statuses: [200, 201, 204, 301, 302, 400, 401, 403, 404]}
+        unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
+
   - id: edge
     type: roundrobin
     nodes:
@@ -248,6 +266,38 @@ routes:
           - "/$1"
       limit-count:
         count: 120
+        time_window: 60
+        rejected_code: 429
+        key: remote_addr
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
+  # Customer self-service portal (Wave 5 #7) — no Keycloak: the portal JWT
+  # (HMAC, 15 min, issued by /public/sites/{slug}/portal/verify) is verified
+  # by booking-service itself. Anonymous like /public/*, but with the
+  # stricter limit-count of an auth surface.
+  - id: api-bookings-portal
+    uris:
+      - /api/bookings/portal/*
+    methods: [GET, POST, OPTIONS]
+    upstream_id: booking
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/bookings/(.*)"
+          - "/$1"
+      limit-count:
+        count: 60
         time_window: 60
         rejected_code: 429
         key: remote_addr
@@ -404,6 +454,43 @@ routes:
         max_age: 3600
         allow_credential: false
 
+  # Outbound webhook platform (Wave 5 #10): notification-worker REST
+  # (/v1/webhooks) behind the standard jwt + rewrite pattern.
+  - id: api-notifications
+    uris:
+      - /api/notifications/*
+      - /api/notifications
+    methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+    upstream_id: notification
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/notifications/?(.*)"
+          - "/$1"
+      openid-connect:
+        discovery: http://keycloak:8080/realms/opendesk/.well-known/openid-configuration
+        bearer_only: true
+        realm: opendesk
+        client_id: admin-web
+        use_pkce: true
+      limit-count:
+        count: 300
+        time_window: 60
+        rejected_code: 429
+        key: remote_addr
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
   # ---- Twenty CRM (SPEC-CRM §A): /crm/* -> twenty-api, bearer_only OIDC ----
   - id: crm-twenty
     uris:
@@ -514,7 +601,8 @@ routes:
   # value, so each plan gets its own bucket. Plan map (per-tenant, per-min):
   #   free = 60   |   pro = 600   |   (absent header = "anonymous" bucket: 60)
   # Deploy by cloning this block per plan with a `vars` match, e.g.:
-  #   free: vars: [["http_x_tenant_plan","==","free"]]  + count: 60
+  #   free: vars: [["http_x_tenant_plan","==","free"]] 
+  #     + count: 60
   #   pro:  vars: [["http_x_tenant_plan","==","pro"]]   + count: 600
   # This route is DISABLED (status: 0) — it documents the pattern; enable it
   # on the plan-gated surface (e.g. /api/knowledge/*) when billing launches.

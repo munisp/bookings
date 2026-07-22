@@ -15,3 +15,6 @@ CREATE DATABASE iceberg;
 -- SPEC-CRM §A/§B: Twenty CRM database + crm-sync-service sync_map database.
 CREATE DATABASE twenty;
 CREATE DATABASE crm_sync;
+-- Wave 5 #10: notification-worker webhook platform (webhook_subscriptions /
+-- webhook_deliveries, bootstrapped idempotently by the service itself).
+CREATE DATABASE notifications;
