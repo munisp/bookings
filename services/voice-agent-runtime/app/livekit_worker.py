@@ -8,6 +8,13 @@ Room convention: room name `site-{slug}` binds the session to a tenant's
 public site; the server (never the model) resolves the tenant from the slug
 (SPEC §1 tenant-safe tool resolution).
 
+Scaling (VOICE-SCALING §2): the worker prewarms each idle job process
+(whisper model load + piper warmup synthesis, PRELOAD_MODELS=true) via
+WorkerOptions.prewarm_fnc, keeps AGENT_IDLE_PROCESSES processes warm and
+gates admission on an explicit psutil CPU load_fnc / LOAD_THRESHOLD. Slow
+tools get filler ack lines + a hard timeout (VOICE-SCALING §5) via
+app/async_tools.py.
+
 Run:  python -m app.livekit_worker start   (via livekit agents CLI)
 
 Version-sensitivity note: the `stt.STT`/`tts.TTS` bridge classes below use
@@ -20,8 +27,9 @@ app/pipeline/ are version-agnostic.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
-from typing import AsyncIterable
+from typing import Any, AsyncIterable
 
 from livekit import agents, rtc
 from livekit.agents import llm as lk_llm
@@ -32,6 +40,8 @@ from livekit.agents.pipeline import VoicePipelineAgent
 from livekit.plugins import openai as lk_openai
 from livekit.plugins import silero
 
+from . import metrics
+from .async_tools import AsyncToolRunner, ToolAckPolicy
 from .config import Settings, load_settings
 from .dapr_client import DaprClient, DaprError
 from .events import new_cloudevent
@@ -46,6 +56,77 @@ from .tools import ToolLayer
 log = get_logger("livekit-worker")
 
 ROOM_PREFIX = "site-"
+
+# Prewarmed pipeline stages (VOICE-SCALING §2): populated by the worker
+# `prewarm_fnc` in each warm job process so the first call on that process
+# does not pay the whisper load / piper cold-start cost.
+_PREWARMED: dict[str, Any] = {}
+
+PREWARM_PHRASE = "Hello, thank you for calling. How can I help you today?"
+
+
+def _build_stt(settings: Settings) -> FasterWhisperSTT:
+    return FasterWhisperSTT(
+        model_size=settings.whisper_model,
+        device=settings.whisper_device,
+        compute_type=settings.whisper_compute_type,
+    )
+
+
+def _build_tts(settings: Settings) -> PiperTTS:
+    return PiperTTS(
+        mode=settings.piper_mode,
+        http_url=settings.piper_http_url,
+        voice=settings.piper_voice,
+        piper_bin=settings.piper_bin,
+        model_dir=settings.piper_model_dir,
+        sample_rate=settings.piper_sample_rate,
+    )
+
+
+def make_prewarm_fnc(settings: Settings):
+    """WorkerOptions.prewarm_fnc (livekit-agents 0.10.x: runs synchronously in
+    each warm job process before it accepts jobs).
+
+    Eagerly loads the whisper model and runs one piper warmup synthesis so a
+    warm process' first call has no dead air. Failures degrade to the old
+    lazy-load behaviour (logged, never fatal).
+    """
+
+    def _prewarm(proc) -> None:  # noqa: ARG001 - proc userdata unused; module cache suffices
+        if not settings.preload_models:
+            return
+        try:
+            stt = _build_stt(settings)
+            stt.preload_sync()
+            _PREWARMED["stt"] = stt
+            log.info("prewarm: whisper model loaded", model=settings.whisper_model)
+        except Exception as exc:  # noqa: BLE001 - degrade to lazy load
+            log.warning("prewarm: whisper load failed (lazy fallback)", error=str(exc)[:200])
+        try:
+            tts = _build_tts(settings)
+            asyncio.run(tts.synthesize_pcm(PREWARM_PHRASE))
+            _PREWARMED["tts"] = tts
+            log.info("prewarm: piper warmup synthesis done", voice=settings.piper_voice)
+        except Exception as exc:  # noqa: BLE001 - degrade to lazy load
+            log.warning("prewarm: piper warmup failed (lazy fallback)", error=str(exc)[:200])
+
+    return _prewarm
+
+
+def cpu_load_fnc() -> float:
+    """WorkerOptions.load_fnc: explicit CPU-based load in [0, 1] (psutil).
+
+    Verified against livekit-agents 0.10.2 (`WorkerOptions.load_fnc: Callable
+    [[], float]`; the stock default is psutil-based too — this makes the
+    contract explicit and tunable via LOAD_THRESHOLD).
+    """
+    try:
+        import psutil
+
+        return psutil.cpu_percent(interval=0.1) / 100.0
+    except Exception:  # noqa: BLE001 - never break job admission
+        return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -113,9 +194,35 @@ class PiperTTSNode(lk_tts.TTS):
 # Function context: the 6 tools with EXACT names (SPEC §11)
 # ---------------------------------------------------------------------------
 class ReceptionistFunctions(lk_llm.FunctionContext):
-    def __init__(self, tool_layer: ToolLayer) -> None:
+    """The 6 tools + escalation, exposed to the LLM.
+
+    Slow tools run through AsyncToolRunner (VOICE-SCALING §5): the filler ack
+    line is spoken via `speaker` if the call outlasts the grace window, and a
+    hard timeout resolves to a spoken apology instead of dead air.
+    """
+
+    def __init__(
+        self,
+        tool_layer: ToolLayer,
+        *,
+        runner: AsyncToolRunner | None = None,
+        ack_policy: ToolAckPolicy | None = None,
+        speaker=None,
+    ) -> None:
         super().__init__()
         self._tools = tool_layer
+        self._runner = runner or AsyncToolRunner()
+        self._ack_policy = ack_policy
+        self._speaker = speaker
+
+    def set_speaker(self, speaker) -> None:
+        """Late-bind the ack TTS speaker (needs the constructed agent)."""
+        self._speaker = speaker
+
+    async def _run_slow(self, tool: str, call) -> Any:
+        return await self._runner.run(
+            tool, call, ack_policy=self._ack_policy, speaker=self._speaker
+        )
 
     @lk_llm.ai_callable(
         description="Get business information: catalog (offerings with ids, durations, prices), team members, timezone, currency and terminology."
@@ -138,11 +245,14 @@ class ReceptionistFunctions(lk_llm.FunctionContext):
     ) -> str:
         import json
 
-        result = await self._tools.get_availability(
-            offering_id=offering_id,
-            team_member_id=team_member_id,
-            from_iso=from_iso,
-            to_iso=to_iso,
+        result = await self._run_slow(
+            "get_availability",
+            lambda: self._tools.get_availability(
+                offering_id=offering_id,
+                team_member_id=team_member_id,
+                from_iso=from_iso,
+                to_iso=to_iso,
+            ),
         )
         return json.dumps(result, ensure_ascii=False)
 
@@ -160,13 +270,16 @@ class ReceptionistFunctions(lk_llm.FunctionContext):
     ) -> str:
         import json
 
-        result = await self._tools.book_appointment(
-            offering_id=offering_id,
-            team_member_id=team_member_id,
-            starts_at=starts_at,
-            phone=phone,
-            contact_name=contact_name or None,
-            email=email or None,
+        result = await self._run_slow(
+            "book_appointment",
+            lambda: self._tools.book_appointment(
+                offering_id=offering_id,
+                team_member_id=team_member_id,
+                starts_at=starts_at,
+                phone=phone,
+                contact_name=contact_name or None,
+                email=email or None,
+            ),
         )
         return json.dumps(result, ensure_ascii=False)
 
@@ -176,7 +289,10 @@ class ReceptionistFunctions(lk_llm.FunctionContext):
     async def lookup_appointment(self, phone: str) -> str:
         import json
 
-        result = await self._tools.lookup_appointment(phone=phone)
+        result = await self._run_slow(
+            "lookup_appointment",
+            lambda: self._tools.lookup_appointment(phone=phone),
+        )
         return json.dumps(result, ensure_ascii=False)
 
     @lk_llm.ai_callable(
@@ -187,8 +303,11 @@ class ReceptionistFunctions(lk_llm.FunctionContext):
     ) -> str:
         import json
 
-        result = await self._tools.reschedule_appointment(
-            booking_id=booking_id, starts_at=starts_at, phone=phone
+        result = await self._run_slow(
+            "reschedule_appointment",
+            lambda: self._tools.reschedule_appointment(
+                booking_id=booking_id, starts_at=starts_at, phone=phone
+            ),
         )
         return json.dumps(result, ensure_ascii=False)
 
@@ -200,8 +319,11 @@ class ReceptionistFunctions(lk_llm.FunctionContext):
     ) -> str:
         import json
 
-        result = await self._tools.cancel_appointment(
-            booking_id=booking_id, phone=phone, reason=reason or None
+        result = await self._run_slow(
+            "cancel_appointment",
+            lambda: self._tools.cancel_appointment(
+                booking_id=booking_id, phone=phone, reason=reason or None
+            ),
         )
         return json.dumps(result, ensure_ascii=False)
 
@@ -254,25 +376,27 @@ async def build_voice_agent(
     system_prompt = build_system_prompt(ctx, conversation_id=conversation_id)
 
     chat_ctx = lk_llm.ChatContext().append(role="system", text=system_prompt)
-    fnc_ctx = ReceptionistFunctions(tool_layer)
+    runner = AsyncToolRunner(
+        timeout_s=settings.tool_timeout_s,
+        ack_grace_ms=settings.tool_ack_grace_ms,
+    )
+    fnc_ctx = ReceptionistFunctions(
+        tool_layer,
+        runner=runner,
+        ack_policy=ToolAckPolicy.from_context(ctx),
+    )
 
-    stt_impl = FasterWhisperSTT(
-        model_size=settings.whisper_model,
-        device=settings.whisper_device,
-        compute_type=settings.whisper_compute_type,
-    )
-    tts_impl = PiperTTS(
-        mode=settings.piper_mode,
-        http_url=settings.piper_http_url,
-        voice=settings.piper_voice,
-        piper_bin=settings.piper_bin,
-        model_dir=settings.piper_model_dir,
-        sample_rate=settings.piper_sample_rate,
-    )
+    # Reuse the prewarmed stages when the worker prewarm hook populated them.
+    stt_impl = _PREWARMED.get("stt") or _build_stt(settings)
+    tts_impl = _PREWARMED.get("tts") or _build_tts(settings)
 
     agent = VoicePipelineAgent(
         vad=silero.VAD.load(),
         stt=WhisperSTTNode(stt_impl),
+        # NOTE (VOICE-SCALING §3): the livekit-plugins-openai LLM node cannot
+        # hot-swap endpoints mid-process, so the LLM fallback chain
+        # (app/pipeline/llm.py FallbackLLM) covers the chat/tool-loop paths;
+        # the worker node relies on the primary endpoint + job-level retry.
         llm=lk_openai.LLM(
             model=settings.llm_model,
             base_url=settings.llm_base_url,
@@ -283,6 +407,9 @@ async def build_voice_agent(
         fnc_ctx=fnc_ctx,
         allow_interruptions=True,
     )
+    # Voice-path filler: speak the ack line through the agent's TTS while a
+    # slow tool call is in flight (cancelled when the tool answers fast).
+    fnc_ctx.set_speaker(lambda text: agent.say(text, allow_interruptions=True))
     return agent, ctx, session
 
 
@@ -313,6 +440,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         "com.opendesk.conversation.SessionStarted",
         conversation_id,
     )
+    metrics.get_registry().active_sessions.inc()
 
     agent.start(ctx.room)
     # Greet the caller so the conversation opens naturally.
@@ -325,6 +453,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     def _on_disconnected(*args) -> None:  # noqa: ARG001
         import asyncio
 
+        metrics.get_registry().active_sessions.dec()
         asyncio.get_event_loop().create_task(
             _publish_lifecycle(
                 dapr,
@@ -336,18 +465,47 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         )
 
 
+def build_worker_options(settings: Settings) -> "agents.WorkerOptions":
+    """WorkerOptions with prewarming + CPU load gating (VOICE-SCALING §2).
+
+    Field names verified against the livekit-agents 0.10.2 wheel
+    (`num_idle_processes`, `load_fnc`, `load_threshold`, `prewarm_fnc`); the
+    TypeError fallback keeps the worker bootable if a future 0.10.x patch
+    reshapes the signature.
+    """
+    scaling_kwargs: dict[str, Any] = {
+        "num_idle_processes": settings.agent_idle_processes,
+        "load_fnc": cpu_load_fnc,
+        "load_threshold": settings.load_threshold,
+        "prewarm_fnc": make_prewarm_fnc(settings),
+    }
+    base_kwargs: dict[str, Any] = {
+        "entrypoint_fnc": entrypoint,
+        "api_key": settings.livekit_api_key,
+        "api_secret": settings.livekit_api_secret,
+        "ws_url": settings.livekit_url,
+    }
+    try:
+        return agents.WorkerOptions(**base_kwargs, **scaling_kwargs)
+    except TypeError as exc:
+        log.warning(
+            "WorkerOptions rejected scaling kwargs; falling back to minimal options",
+            error=str(exc),
+        )
+        return agents.WorkerOptions(**base_kwargs)
+
+
 def main() -> None:
     settings = load_settings()
     configure_logging(settings.log_level)
-    log.info("starting livekit agents worker", backend=settings.agent_backend)
-    agents.cli.run_app(
-        agents.WorkerOptions(
-            entrypoint_fnc=entrypoint,
-            api_key=settings.livekit_api_key,
-            api_secret=settings.livekit_api_secret,
-            ws_url=settings.livekit_url,
-        )
+    log.info(
+        "starting livekit agents worker",
+        backend=settings.agent_backend,
+        preload_models=settings.preload_models,
+        idle_processes=settings.agent_idle_processes,
+        load_threshold=settings.load_threshold,
     )
+    agents.cli.run_app(build_worker_options(settings))
 
 
 if __name__ == "__main__":

@@ -9,10 +9,13 @@ the text chat path; the LiveKit worker uses the equivalent
 from __future__ import annotations
 
 import json
-from typing import Any, Protocol
+import time
+from typing import Any, Callable, Protocol
 
+import openai
 from openai import AsyncOpenAI
 
+from .. import metrics
 from ..logging import get_logger
 
 log = get_logger("llm")
@@ -31,9 +34,30 @@ class LLMInterface(Protocol):
         ...
 
 
+def _record_usage(usage: Any) -> None:
+    if usage is None:
+        return
+    registry = metrics.get_registry()
+    prompt = getattr(usage, "prompt_tokens", None)
+    completion = getattr(usage, "completion_tokens", None)
+    if prompt:
+        registry.llm_tokens.inc(prompt, kind="prompt")
+    if completion:
+        registry.llm_tokens.inc(completion, kind="completion")
+
+
 class OpenAICompatibleLLM:
-    def __init__(self, base_url: str, model: str, api_key: str = "ollama") -> None:
-        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        api_key: str = "ollama",
+        timeout_s: float | None = None,
+    ) -> None:
+        kwargs: dict[str, Any] = {"base_url": base_url, "api_key": api_key}
+        if timeout_s is not None:
+            kwargs["timeout"] = timeout_s
+        self._client = AsyncOpenAI(**kwargs)
         self.model = model
 
     async def chat_with_tools(
@@ -41,13 +65,15 @@ class OpenAICompatibleLLM:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> Any:
-        resp = await self._client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            tools=tools or None,
-            tool_choice="auto" if tools else None,
-            temperature=0.3,
-        )
+        with metrics.get_registry().llm_latency.time():
+            resp = await self._client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=tools or None,
+                tool_choice="auto" if tools else None,
+                temperature=0.3,
+            )
+        _record_usage(getattr(resp, "usage", None))
         return resp.choices[0].message
 
     async def complete(self, messages: list[dict[str, Any]]) -> str:
@@ -65,14 +91,188 @@ class OpenAICompatibleLLM:
         carry `content` text and/or incremental `tool_calls` fragments that
         must be assembled by index before execution.
         """
-        return await self._client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            tools=tools or None,
-            tool_choice="auto" if tools else None,
-            temperature=0.3,
-            stream=True,
-        )
+        with metrics.get_registry().llm_latency.time():
+            stream = await self._client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=tools or None,
+                tool_choice="auto" if tools else None,
+                temperature=0.3,
+                stream=True,
+                stream_options={"include_usage": True},
+            )
+        return stream
+
+
+# ---------------------------------------------------------------------------
+# Fallback chain (VOICE-SCALING §3): primary -> secondary OpenAI-compatible
+# endpoint with a circuit breaker. Retry-with-fallback = degraded latency,
+# not dead calls.
+# ---------------------------------------------------------------------------
+def is_retryable_llm_error(exc: BaseException) -> bool:
+    """Connection errors, timeouts, 429s and 5xxs justify a fallback hop."""
+    if isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError, TimeoutError)):
+        return True
+    if isinstance(exc, openai.APIStatusError):
+        return exc.status_code == 429 or exc.status_code >= 500
+    return False
+
+
+class CircuitBreaker:
+    """After `failure_threshold` consecutive primary failures, route calls to
+    the fallback for `cooldown_s`, then allow one primary probe. A failed
+    probe re-opens the circuit for another cooldown window."""
+
+    def __init__(
+        self,
+        failure_threshold: int = 3,
+        cooldown_s: float = 60.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._threshold = max(1, failure_threshold)
+        self._cooldown = cooldown_s
+        self._clock = clock
+        self._failures = 0
+        self._opened_at: float | None = None
+
+    @property
+    def is_open(self) -> bool:
+        return self._opened_at is not None and not self.primary_allowed()
+
+    def primary_allowed(self) -> bool:
+        if self._opened_at is None:
+            return True
+        return (self._clock() - self._opened_at) >= self._cooldown
+
+    def record_success(self) -> None:
+        self._failures = 0
+        self._opened_at = None
+
+    def record_failure(self) -> None:
+        self._failures += 1
+        if self._failures >= self._threshold:
+            self._opened_at = self._clock()
+
+
+class FallbackLLM:
+    """LLMInterface wrapper: primary endpoint with circuit-broken fallback.
+
+    Applies to every chat path entry point (buffered tool loop, streaming
+    tool loop, `complete`). The LiveKit worker's LLM node is the
+    livekit-plugins-openai class and cannot hot-swap endpoints mid-process;
+    the fallback chain covers the chat/tool-loop paths (see README).
+    """
+
+    def __init__(
+        self,
+        primary: OpenAICompatibleLLM,
+        fallback: OpenAICompatibleLLM | None,
+        *,
+        failure_threshold: int = 3,
+        cooldown_s: float = 60.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._primary = primary
+        self._fallback = fallback
+        self._breaker = CircuitBreaker(failure_threshold, cooldown_s, clock)
+
+    @property
+    def breaker(self) -> CircuitBreaker:
+        return self._breaker
+
+    async def _call_primary(self, method: str, *args) -> Any:
+        try:
+            result = await getattr(self._primary, method)(*args)
+            self._breaker.record_success()
+            return result
+        except Exception as exc:
+            if not is_retryable_llm_error(exc):
+                raise
+            self._breaker.record_failure()
+            if self._fallback is None:
+                raise
+            log.warning(
+                "primary LLM failed; using fallback",
+                method=method,
+                error=str(exc)[:200],
+                circuit_open=self._breaker.is_open,
+            )
+            return await getattr(self._fallback, method)(*args)
+
+    async def chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> Any:
+        if self._fallback is None or self._breaker.primary_allowed():
+            return await self._call_primary("chat_with_tools", messages, tools)
+        return await self._fallback.chat_with_tools(messages, tools)
+
+    async def complete(self, messages: list[dict[str, Any]]) -> str:
+        msg = await self.chat_with_tools(messages, tools=[])
+        return msg.content or ""
+
+    async def stream_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> Any:
+        """Returns an async generator of chunks (fallback-safe).
+
+        Falls back only when the primary fails BEFORE any chunk was yielded;
+        a mid-stream failure re-raises to avoid duplicating spoken content.
+        """
+        return self._stream_gen(messages, tools)
+
+    async def _stream_gen(self, messages, tools):
+        if self._fallback is not None and not self._breaker.primary_allowed():
+            stream = await self._fallback.stream_with_tools(messages, tools)
+            async for chunk in stream:
+                yield chunk
+            return
+        yielded = False
+        try:
+            stream = await self._primary.stream_with_tools(messages, tools)
+            async for chunk in stream:
+                yielded = True
+                yield chunk
+            self._breaker.record_success()
+            return
+        except Exception as exc:
+            if yielded or not is_retryable_llm_error(exc) or self._fallback is None:
+                raise
+            self._breaker.record_failure()
+            log.warning(
+                "primary LLM stream failed; using fallback", error=str(exc)[:200]
+            )
+        stream = await self._fallback.stream_with_tools(messages, tools)
+        async for chunk in stream:
+            yield chunk
+
+
+def build_llm(settings) -> LLMInterface:
+    """Factory from Settings: primary endpoint, plus the fallback chain when
+    LLM_FALLBACK_BASE_URL is configured."""
+    primary = OpenAICompatibleLLM(
+        base_url=settings.llm_base_url,
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+        timeout_s=settings.llm_timeout_s,
+    )
+    if not settings.llm_fallback_base_url:
+        return primary
+    fallback = OpenAICompatibleLLM(
+        base_url=settings.llm_fallback_base_url,
+        model=settings.llm_fallback_model or settings.llm_model,
+        api_key=settings.llm_fallback_api_key or "none",
+        timeout_s=settings.llm_timeout_s,
+    )
+    return FallbackLLM(
+        primary,
+        fallback,
+        failure_threshold=settings.llm_cb_failures,
+        cooldown_s=settings.llm_cb_cooldown_s,
+    )
 
 
 async def run_tool_loop(
@@ -148,11 +348,15 @@ async def run_tool_loop_stream(
     tools: list[dict[str, Any]],
     dispatch,
     max_rounds: int = 6,
+    ack_for_tool=None,
 ):
     """Streaming variant of run_tool_loop (SPEC-W3 §3 SSE chat).
 
     Async generator yielding events through the SAME tool layer:
       - {"type": "delta", "text": ...} for every LLM content chunk,
+      - {"type": "ack", "tool": name, "text": ...} immediately BEFORE a slow
+        tool executes, when `ack_for_tool(name)` returns a filler line
+        (VOICE-SCALING §5 async tools: no dead air on the SSE chat path),
       - {"type": "tool", "tool": name, "arguments": ..., "result": ...}
         when a streamed tool call completes and is executed,
       - {"type": "final", "text": full_reply, "trace": [...]} exactly once
@@ -171,6 +375,7 @@ async def run_tool_loop_stream(
         # Assemble incremental tool-call fragments by their `index` slot.
         tc_acc: dict[int, dict[str, Any]] = {}
         async for chunk in stream:
+            _record_usage(getattr(chunk, "usage", None))
             choices = getattr(chunk, "choices", None) or []
             if not choices:
                 continue
@@ -218,6 +423,10 @@ async def run_tool_loop_stream(
                 arguments = json.loads(tc["arguments"] or "{}")
             except json.JSONDecodeError:
                 arguments = {}
+            if ack_for_tool is not None:
+                ack = ack_for_tool(name)
+                if ack:
+                    yield {"type": "ack", "tool": name, "text": ack}
             result = await dispatch(name, arguments)
             trace.append({"tool": name, "arguments": arguments, "result": result})
             yield {"type": "tool", "tool": name, "arguments": arguments, "result": result}
