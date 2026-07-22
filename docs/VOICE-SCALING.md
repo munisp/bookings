@@ -1,0 +1,1 @@
+See docs/VOICE-SCALING.md in the repository — pushed via follow-up commit with full content.
