@@ -1,0 +1,146 @@
+# Compose fragment for the voice stack (SPEC §3/§11): merge into the root
+# infra/docker-compose.yml or run standalone with
+#   docker compose -f docker-compose.yml -f services/voice-agent-runtime/docker-compose.fragment.yml --profile voice up
+# All services join the `opendesk` network (declared by the root compose).
+
+services:
+  ollama:
+    image: ollama/ollama:0.3.12
+    profiles: ["voice"]
+    networks: [opendesk]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  # One-time model pulls (LLM). Runs to completion, then exits.
+  ollama-init:
+    image: ollama/ollama:0.3.12
+    profiles: ["voice"]
+    networks: [opendesk]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "OLLAMA_HOST=http://ollama:11434 ollama pull $${LLM_MODEL:-llama3.1:8b}"
+    volumes:
+      - ollama-models:/root/.ollama
+
+  piper:
+    build:
+      context: ./sidecar
+    profiles: ["voice"]
+    networks: [opendesk]
+    environment:
+      PIPER_VOICE: ${PIPER_VOICE:-en_US-lessac-medium}
+    volumes:
+      - piper-voices:/voices
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:5500/healthz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # One-time piper voice download (idempotent).
+  piper-init:
+    build:
+      context: ./sidecar
+    profiles: ["voice"]
+    networks: [opendesk]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "python -m piper.download_voices $${PIPER_VOICE:-en_US-lessac-medium} --download-dir /voices || true; ls /voices"
+    volumes:
+      - piper-voices:/voices
+
+  voice-agent-runtime:
+    build:
+      context: .
+    image: opendesk/voice-agent-runtime:dev
+    profiles: ["voice"]
+    networks: [opendesk]
+    ports:
+      - "7006:7006"
+    volumes:
+      - whisper-models:/models
+    environment:
+      PORT: "7006"
+      DAPR_HOST: daprd-voice
+      DAPR_HTTP_PORT: "3500"
+      LIVEKIT_URL: ws://livekit:7880
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
+      LLM_BASE_URL: http://ollama:11434/v1
+      LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
+      LLM_API_KEY: ${LLM_API_KEY:-ollama}
+      WHISPER_MODEL: ${WHISPER_MODEL:-base}
+      PIPER_MODE: http
+      PIPER_HTTP_URL: http://piper:5500
+      PIPER_VOICE: ${PIPER_VOICE:-en_US-lessac-medium}
+      AGENT_BACKEND: ${AGENT_BACKEND:-livekit}
+    depends_on:
+      - daprd-voice
+      - piper
+
+  # LiveKit Agents worker process (same image, different entrypoint).
+  voice-agent-worker:
+    image: opendesk/voice-agent-runtime:dev
+    profiles: ["voice"]
+    networks: [opendesk]
+    volumes:
+      - whisper-models:/models
+    environment:
+      DAPR_HOST: daprd-voice
+      DAPR_HTTP_PORT: "3500"
+      LIVEKIT_URL: ws://livekit:7880
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
+      LLM_BASE_URL: http://ollama:11434/v1
+      LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
+      LLM_API_KEY: ${LLM_API_KEY:-ollama}
+      WHISPER_MODEL: ${WHISPER_MODEL:-base}
+      PIPER_MODE: http
+      PIPER_HTTP_URL: http://piper:5500
+      PIPER_VOICE: ${PIPER_VOICE:-en_US-lessac-medium}
+      AGENT_BACKEND: ${AGENT_BACKEND:-livekit}
+    command: ["python", "-m", "app.livekit_worker", "start"]
+    depends_on:
+      - daprd-voice
+      - piper
+
+  # Dapr sidecar companion (SPEC §3: app talks to daprd-voice:3500).
+  daprd-voice:
+    image: daprio/daprd:1.14.4
+    profiles: ["voice"]
+    networks: [opendesk]
+    command:
+      - "./daprd"
+      - "-app-id"
+      - "voice"
+      - "-app-port"
+      - "7006"
+      - "-dapr-http-port"
+      - "3500"
+      - "-components-path"
+      - "/components"
+      - "-log-level"
+      - "warn"
+    volumes:
+      - "../../infra/dapr/components:/components:ro"
+
+volumes:
+  ollama-models:
+  piper-voices:
+  whisper-models:
+
+networks:
+  # Matches the declaration in infra/docker-compose.core.yml so the fragment
+  # merges cleanly with the root compose files.
+  opendesk:
+    driver: bridge

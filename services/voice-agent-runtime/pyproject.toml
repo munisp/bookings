@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "voice-agent-runtime"
+version = "0.1.0"
+description = "OpenDesk voice agent runtime: LiveKit Agents worker (whisper/ollama/piper) + FastAPI control plane (SPEC §11)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # LiveKit agents framework + server SDK. Version set verified against
+    # PyPI metadata: agents 0.10.x requires livekit-api ~=0.6;
+    # plugins-openai >=0.10.5 requires agents >=0.11 and silero >=0.7.3
+    # requires agents >=0.11, hence the upper bounds below.
+    "livekit-agents==0.10.*",
+    "livekit-api>=0.6,<0.7",
+    # Plugins: silero VAD; openai plugin provides the OpenAI-compatible LLM
+    # node used against Ollama/vLLM (base_url override).
+    "livekit-plugins-silero>=0.7.1,<0.7.3",
+    "livekit-plugins-openai>=0.10,<0.10.4",
+    # In-process STT
+    "faster-whisper==1.0.*",
+    # Control plane
+    "fastapi==0.115.*",
+    "uvicorn==0.30.*",
+    # Dapr HTTP client / outbound HTTP
+    "httpx==0.27.*",
+    "structlog>=24.1,<25",
+    # OpenAI-compatible client for the text chat path (LLM_BASE_URL)
+    "openai>=1.40,<2",
+    "pydantic>=2.7,<3",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.23,<0.25",
+    # eval harness scenario files (eval/scenarios/*.yaml)
+    "pyyaml>=6,<7",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

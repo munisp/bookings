@@ -1,0 +1,205 @@
+# voice-agent-runtime
+
+OpenDesk open-source voice stack (SPEC §11): LiveKit Agents worker +
+faster-whisper STT + OpenAI-compatible LLM (Ollama/vLLM) + Piper TTS, plus a
+FastAPI control plane and an optional ElevenLabs adapter backend.
+
+- Control plane port: **7006** (SPEC §3). Dapr sidecar at `daprd-voice:3500`.
+- Two processes share the image: the control plane (`python -m app.main`)
+  and the LiveKit Agents worker (`python -m app.livekit_worker start`).
+
+## Pipeline
+
+silero VAD → faster-whisper STT (in-process, lazy load) → LLM via
+OpenAI-compatible endpoint → Piper TTS (HTTP sidecar or subprocess).
+Each stage sits behind a small interface (`app/pipeline/{stt,llm,tts}.py`)
+so components are swappable; the LiveKit-specific bridges live in
+`app/livekit_worker.py` (the single place pinned to livekit-agents 0.10.x
+internals).
+
+## Tools & safety
+
+The agent exposes exactly six tools: `get_business_info`, `get_availability`,
+`book_appointment`, `lookup_appointment`, `reschedule_appointment`,
+`cancel_appointment`.
+
+- Read-only tools call booking-service public endpoints via Dapr service
+  invocation (`GET /v1.0/invoke/booking/method/public/sites/{slug}/context|availability`,
+  `GET .../v1/bookings` with `X-Tenant-Slug`).
+- Mutating tools publish CloudEvents commands to Kafka topic
+  `opendesk.booking.commands` via Dapr pubsub `pubsub-kafka`
+  (types `com.opendesk.booking.command.{BookAppointment,RescheduleAppointment,CancelAppointment}`,
+  `subject` = tenant slug, `tenantid` ext = tenant UUID, the CloudEvent id is
+  reused as `data.idempotency_key`).
+- **Phone-confirmation policy**: book/lookup/reschedule/cancel refuse without
+  a confirmed phone in session state. Server-enforced two-step: the first
+  call with a new number returns `confirmation_required`; the model reads the
+  number back, the caller confirms, and the repeated call with the same
+  number proceeds. booking-service re-enforces the policy server-side
+  (`ErrPhoneRequired`).
+- Conversation lifecycle events (`SessionStarted`, `SessionEnded`,
+  `ToolInvoked`) are published to `opendesk.conversation.events` via Dapr.
+- Tenant context (terminology/timezone/currency/locale + catalog + knowledge
+  snippets from `knowledge` app-id `GET /v1/context?tenant=&q=`) is fetched
+  at session bootstrap and injected into the system prompt
+  (dynamic-variables approach, SPEC §11). Tenant resolution is always
+  server-side from the site slug — never from the model.
+
+## Control plane
+
+| Method | Path | Body | Description |
+|---|---|---|---|
+| GET | `/healthz` | — | liveness |
+| POST | `/voice/session` | `{site_slug, participant_name?}` | LiveKit access token (room `site-{slug}`) or ElevenLabs signed URL |
+| POST | `/voice/chat` | `{site_slug, message, conversation_id?}` | text-in/text-out through the same tool layer |
+| POST | `/voice/elevenlabs/tools` | ElevenLabs tool webhook payload | only when `AGENT_BACKEND=elevenlabs` |
+
+## Backends
+
+`AGENT_BACKEND=livekit` (default) runs the fully open-source stack.
+`AGENT_BACKEND=elevenlabs` (`app/elevenlabs_adapter.py`) outsources the voice
+orchestration to ElevenLabs ConvAI: `/voice/session` returns a signed URL and
+hosted tool calls are passed through `/voice/elevenlabs/tools` into the same
+ToolLayer, so the phone policy and Dapr command flow are unchanged.
+
+## Env vars
+
+| Var | Default | Description |
+|---|---|---|
+| `PORT` | `7006` | control plane port |
+| `LOG_LEVEL` | `info` | structlog level (JSON logs) |
+| `DAPR_HOST` / `DAPR_HTTP_PORT` | `daprd-voice` / `3500` | Dapr sidecar |
+| `DAPR_PUBSUB_NAME` | `pubsub-kafka` | pubsub component |
+| `BOOKING_APP_ID` / `IDENTITY_APP_ID` / `KNOWLEDGE_APP_ID` | `booking` / `identity` / `knowledge` | Dapr app-ids |
+| `BOOKING_COMMANDS_TOPIC` | `opendesk.booking.commands` | booking commands topic |
+| `CONVERSATION_EVENTS_TOPIC` | `opendesk.conversation.events` | lifecycle/tool events topic |
+| `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | `ws://livekit:7880` / `devkey` / `secret` | LiveKit server (dev keys, SPEC §11) |
+| `LLM_BASE_URL` | `http://ollama:11434/v1` | OpenAI-compatible endpoint (Ollama; vLLM pluggable) |
+| `LLM_MODEL` | `qwen3:8b` | model name (open-weights default, SPEC-W3 §0) |
+| `LLM_API_KEY` | `ollama` | optional pass-through to the OpenAI-compatible client; ignored by Ollama, required by hosted providers (e.g. MiniMax) |
+| `WHISPER_MODEL` | `base` | faster-whisper model size |
+| `WHISPER_DEVICE` / `WHISPER_COMPUTE_TYPE` | `auto` / `int8` | ctranslate2 device/precision |
+| `PIPER_MODE` | `http` | `http` (sidecar) or `subprocess` (local binary) |
+| `PIPER_HTTP_URL` | `http://piper:5500` | piper sidecar URL (`POST /speak` → wav) |
+| `PIPER_VOICE` | `en_US-lessac-medium` | voice model name |
+| `PIPER_BIN` / `PIPER_MODEL_DIR` | `piper` / `/voices` | subprocess mode: binary + model dir |
+| `PIPER_SAMPLE_RATE` | `22050` | expected PCM rate |
+| `AGENT_BACKEND` | `livekit` | `livekit` or `elevenlabs` |
+| `ELEVENLABS_API_KEY` / `ELEVENLABS_AGENT_ID` | _(unset)_ | elevenlabs backend |
+| `KNOWLEDGE_SNIPPET_COUNT` / `KNOWLEDGE_QUERY` | `3` / `opening hours services pricing` | bootstrap grounding |
+| `PHONE_CONFIRMATION_REQUIRED` | `true` | phone-confirmation policy toggle |
+| `COPILOT_MODE` | `true` | whisper-copilot: post suggested replies to the escalation room data channel after `request_human` |
+| `PLUGIN_ALLOWED_HOSTS` | `booking,knowledge,identity` | SSRF allowlist for pack `customTools` |
+| `VOICEPRINTS` | `off` | consent gate for the voice-biometrics scaffold |
+| `VOICEPRINT_THRESHOLD` | `0.75` | cosine-similarity verify threshold |
+| `HF_HOME` | `/models` (image) | whisper model cache dir |
+
+## Local models
+
+- **Ollama**: `docker compose --profile voice up ollama ollama-init` pulls
+  `qwen3:8b` (override with `LLM_MODEL`).
+- **Whisper**: faster-whisper downloads `WHISPER_MODEL` from HuggingFace on
+  first transcription into `HF_HOME` (mounted volume `whisper-models`); no
+  build-time download.
+- **Piper voices**: the `piper-init` compose service runs
+  `python -m piper.download_voices $PIPER_VOICE --download-dir /voices`
+  (idempotent). Models are `{voice}.onnx` + `{voice}.onnx.json` in the
+  `piper-voices` volume. For `PIPER_MODE=subprocess`, download the same files
+  into `PIPER_MODEL_DIR` on the host.
+
+## Run
+
+```bash
+# control plane (dev)
+pip install -e .
+python -m app.main
+
+# LiveKit worker (dev; needs a reachable LiveKit server)
+python -m app.livekit_worker dev
+
+# full voice profile via compose fragment
+docker compose -f infra/docker-compose.core.yml \
+  -f services/voice-agent-runtime/docker-compose.fragment.yml \
+  --profile voice up --build
+
+# smoke: text chat through the tool layer (no audio)
+curl -s localhost:7006/voice/chat -H 'content-type: application/json' \
+  -d '{"site_slug":"demo","message":"What services do you offer?"}'
+```
+
+## Notes / simplifications
+
+- Session state + chat history are in-memory (dev-grade); swap
+  `SessionStore` for the Dapr Redis state store in production.
+- Whisper resampling to 16 kHz is linear (dev-grade); swap in a polyphase
+  resampler if audio quality matters.
+- The LiveKit bridges (`app/livekit_worker.py`) use livekit-agents 0.10.x
+  extension points (`stt.STT._recognize_impl`, `tts.TTS.synthesize`,
+  `VoicePipelineAgent`); if a different 0.10.x patch release reshapes those
+  internals, that file is the single adjustment point.
+
+## Model routing (SPEC-W3 §0)
+
+All LLM access goes through the OpenAI-compatible env triple
+`LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` — swapping models is pure
+configuration, no code changes. Open weights are the default.
+
+| Profile | LLM_BASE_URL | LLM_MODEL | LLM_API_KEY | Use |
+|---|---|---|---|---|
+| **default** | `http://ollama:11434/v1` | `qwen3:8b` | `ollama` (ignored) | local Ollama, pulled by `ollama-init`; good quality/cost balance |
+| quality | `http://ollama:11434/v1` | `qwen3:32b` | `ollama` | higher-quality local model; pull manually (`ollama pull qwen3:32b`), needs ~20GB VRAM/RAM |
+| long-context | `https://api.minimax.io/v1` | `MiniMax-M2` | your MiniMax key | hosted long-context path; `LLM_API_KEY` is passed through to the client. A local MiniMax-M2 via vLLM/Ollama works the same way by pointing `LLM_BASE_URL` at it |
+
+The same env family configures the conversation-service call-intelligence
+LLM (`INTEL_LLM_*`) and the eval harness judge, so one Ollama serves
+everything out of the box.
+
+## Warm handoff & whisper-copilot (innovation 1)
+
+Tool `request_human(reason?)`: creates LiveKit room
+`escalation-{conversation_id}` via livekit-api, mints a staff join token and
+publishes `com.opendesk.conversation.EscalationRequested`
+(`{conversation_id, tenant_id, site_slug, room, join_token_staff, reason}`)
+to `opendesk.conversation.events` via Dapr — the dashboard listens for the
+banner. The caller hears a spoken confirmation. When LiveKit is unreachable
+the event still goes out and the caller flow is unaffected. Afterwards,
+whisper-copilot mode (`COPILOT_MODE=true`) keeps the agent engaged: every
+reply is also posted as a `copilot_suggestion` to the escalation room's
+`copilot` data channel for the operator (best-effort).
+
+## Multi-agent crews (innovation 6)
+
+Packs may declare `agents: [{id, name, persona, intents}]` (see
+`industries/salon.yaml`, `industries/clinic.yaml`; validated by
+identity-service's pack loader and passed through in the tenant pack
+summary). Each chat turn is scored against the agents' intent keywords
+(deterministic, embedding-free); the best match becomes
+`session.active_agent` and its persona is swapped into the system prompt
+(re-rendered per turn) with fallback to the base persona when nothing
+matches.
+
+## Plugin tools (innovation 15 MVP)
+
+Pack `customTools` become real function tools executing declarative HTTP
+calls with `{{var}}` template substitution, guarded by the
+`PLUGIN_ALLOWED_HOSTS` SSRF allowlist. See `docs/plugins.md` (MVP semantics +
+WASM-sandbox phase-2 design) and the example in
+`industries/consultancy.yaml`.
+
+## Voice biometrics (innovation 2) — SCAFFOLD
+
+`app/voiceprint.py` defines the enrollment/verification API:
+`VoiceprintStore` protocol (+ in-memory dev impl), an import-guarded
+Resemblyzer encoder (optional `resemblyzer` package), cosine-similarity
+verification against `VOICEPRINT_THRESHOLD`, and `enroll_voiceprint` /
+`verify_voiceprint` functions gated by the `VOICEPRINTS` consent env
+(default **off**; enrollment additionally requires explicit caller consent).
+**Not wired into the audio pipeline yet** — no audio is ever captured or
+embedded by the running agent. Pipeline integration (post-STT utterance
+sampling + a persistent store) is the next step.
+
+## Eval harness (innovation 5)
+
+`eval/` replays `eval/scenarios/*.yaml` against `/voice/chat`, asserts
+expected tool calls and scores turns with an LLM judge; see `eval/README.md`
+and `make eval`.
