@@ -1,0 +1,166 @@
+"""FastAPI control plane (port 7006, SPEC §11).
+
+- GET  /healthz
+- POST /voice/session {site_slug} -> LiveKit access token (livekit backend)
+         or ElevenLabs signed URL (elevenlabs backend)
+- POST /voice/chat {site_slug, message, conversation_id?} -> text-in/text-out
+         through the same tool layer (no audio)
+- POST /voice/elevenlabs/tools -> ElevenLabs tool webhook passthrough
+         (mounted only when AGENT_BACKEND=elevenlabs)
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import timedelta
+from typing import Any
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from .chat import ChatService
+from .config import Settings, load_settings
+from .dapr_client import DaprClient
+from .elevenlabs_adapter import ElevenLabsBackend
+from .livekit_worker import ROOM_PREFIX
+from .logging import configure_logging, get_logger
+from .pipeline.llm import OpenAICompatibleLLM
+from .session_state import SessionStore
+
+log = get_logger("control-plane")
+
+
+class SessionRequest(BaseModel):
+    site_slug: str = Field(min_length=1)
+    participant_name: str | None = None
+
+
+class ChatRequest(BaseModel):
+    site_slug: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    conversation_id: str | None = None
+    # SPEC-W3 §3: stream=true switches the response to text/event-stream.
+    stream: bool = False
+
+
+class VoiceSessionResponse(BaseModel):
+    backend: str
+    room: str | None = None
+    url: str | None = None
+    token: str | None = None
+    signed_url: str | None = None
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or load_settings()
+    configure_logging(settings.log_level)
+
+    dapr = DaprClient(settings.dapr_base_url, settings.http_timeout_s)
+    sessions = SessionStore()
+    llm = OpenAICompatibleLLM(
+        base_url=settings.llm_base_url,
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+    )
+    chat_service = ChatService(settings=settings, dapr=dapr, llm=llm, sessions=sessions)
+    elevenlabs = (
+        ElevenLabsBackend(settings=settings, dapr=dapr, sessions=sessions)
+        if settings.agent_backend == "elevenlabs"
+        else None
+    )
+
+    app = FastAPI(title="OpenDesk voice-agent-runtime", version="0.1.0")
+
+    @app.on_event("shutdown")
+    async def _shutdown() -> None:
+        await dapr.aclose()
+        if elevenlabs is not None:
+            await elevenlabs.aclose()
+
+    @app.get("/healthz")
+    async def healthz() -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "service": "voice-agent-runtime",
+            "backend": settings.agent_backend,
+        }
+
+    @app.post("/voice/session", response_model=VoiceSessionResponse)
+    async def create_voice_session(req: SessionRequest) -> VoiceSessionResponse:
+        if settings.agent_backend == "elevenlabs":
+            assert elevenlabs is not None
+            try:
+                payload = await elevenlabs.get_signed_url()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("elevenlabs signed url failed", error=str(exc))
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            return VoiceSessionResponse(
+                backend="elevenlabs", signed_url=payload.get("signed_url")
+            )
+
+        # LiveKit backend: mint an access token for room `site-{slug}`.
+        from livekit import api as lk_api
+
+        room = f"{ROOM_PREFIX}{req.site_slug}"
+        identity = f"web-{uuid.uuid4().hex[:8]}"
+        token = (
+            lk_api.AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
+            .with_identity(identity)
+            .with_name(req.participant_name or "Caller")
+            .with_grants(lk_api.VideoGrants(room_join=True, room=room))
+            .with_ttl(timedelta(minutes=30))
+            .to_jwt()
+        )
+        log.info("livekit session token minted", room=room, identity=identity)
+        return VoiceSessionResponse(
+            backend="livekit", room=room, url=settings.livekit_url, token=token
+        )
+
+    @app.post("/voice/chat")
+    async def voice_chat(req: ChatRequest) -> Any:
+        # SPEC-W3 §3 SSE streaming chat: stream=true answers with
+        # text/event-stream frames `data: {"delta": "..."}` per LLM chunk
+        # (through the same tool layer) and a terminal
+        # `data: {"done": true, ...}` frame. The buffered path is unchanged.
+        if req.stream:
+
+            async def event_source():
+                try:
+                    async for event in chat_service.handle_message_stream(
+                        site_slug=req.site_slug,
+                        message=req.message,
+                        conversation_id=req.conversation_id,
+                    ):
+                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("chat stream failed", site_slug=req.site_slug, error=str(exc))
+                    yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+
+            return StreamingResponse(
+                event_source(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        try:
+            return await chat_service.handle_message(
+                site_slug=req.site_slug,
+                message=req.message,
+                conversation_id=req.conversation_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("chat failed", site_slug=req.site_slug, error=str(exc))
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if elevenlabs is not None:
+
+        @app.post("/voice/elevenlabs/tools")
+        async def elevenlabs_tools(payload: dict[str, Any]) -> dict[str, Any]:
+            try:
+                return await elevenlabs.handle_tool_webhook(payload)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("elevenlabs tool webhook failed", error=str(exc))
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return app
