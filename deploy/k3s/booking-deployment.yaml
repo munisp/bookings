@@ -33,6 +33,11 @@ spec:
               value: booking
             - name: DATABASE_URL
               value: postgres://opendesk:opendesk@postgres:5432/booking
+            # pgxpool MaxConns — size for PEAK concurrent calls, not average
+            # (voice turns fan out into availability lookups). Formula and
+            # per-service defaults: docs/runbooks/capacity-planning.md §DB.
+            - name: PG_MAX_CONNS
+              value: "20"
             - name: KAFKA_BROKERS
               value: kafka:9092
             - name: REDIS_ADDR

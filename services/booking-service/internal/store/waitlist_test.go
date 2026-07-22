@@ -96,7 +96,7 @@ func newTestStore(t *testing.T) *Store {
 	t.Cleanup(func() { _ = ep.Stop() })
 
 	ctx := context.Background()
-	st, err := New(ctx, "postgres://postgres:postgres@localhost:5432/booking_test?sslmode=disable")
+	st, err := New(ctx, "postgres://postgres:postgres@localhost:5432/booking_test?sslmode=disable", 0)
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
 	}
