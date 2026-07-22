@@ -25,6 +25,44 @@ All activities use `ActivityOptions` with `StartToCloseTimeout=30s`, heartbeat
 | POST | `/dev/trigger-reminder` | Start a `ReminderWorkflow` with short delays (`delays_seconds`, default `[5,10]`) for manual testing |
 | POST | `/dev/trigger-onboarding` | Start a `TenantOnboardingWorkflow` manually |
 | POST | `/v1/signals` | Deliver a signal to a running workflow. Body: `{"workflow_id","signal","payload"?}`. Payload is optional (`IntakeCompleted`, `Responded`, `NoShow` carry none; `booking-event` takes `{"type":"cancelled"}`). Returns 202, 404 when the workflow is not running. Used by staff UIs to mark clinic intake completed / support tickets responded on the `pack-{bookingId}` workflows (SPEC-CRM §C2). |
+| POST/GET | `/v1/webhooks` | Outbound webhook subscriptions (Wave 5 #10). Tenant via `X-Tenant-Slug` (resolved through identity-service). POST body `{"url","events":[],"secret"?}` — events support exact types, `prefix.*` and `*`; the secret is generated when omitted and returned **only in the create response** (list masks it as `secret_set`). |
+| DELETE | `/v1/webhooks/{id}` | Remove a subscription (deliveries cascade). |
+| GET | `/v1/webhooks/{id}/deliveries` | Delivery history (status `pending`/`retrying`/`delivered`/`dlq`, attempts, last_status_code, next_retry_at). |
+
+APISIX fronts these at `/api/notifications/*` with the standard jwt +
+rewrite pattern (upstream `notification:7003`).
+
+## Outbound webhook platform (Wave 5 #10)
+
+`opendesk.booking.events` + `opendesk.conversation.events` are consumed by
+the webhook dispatcher (kafka-go, group `notification-webhooks`). Every
+event is matched against the tenant's active subscriptions
+(`webhooks.EventMatches`: exact / `prefix.*` / `*`); each match inserts a
+`webhook_deliveries` row and starts one `WebhookDeliveryWorkflow` (id
+`webhook-delivery-{deliveryId}`, so redelivered events are idempotent).
+
+The workflow POSTs the raw CloudEvents envelope with headers
+`X-OpenDesk-Signature: sha256=<hex HMAC-SHA256(secret, body)>`,
+`X-OpenDesk-Event`, `X-OpenDesk-Timestamp`, `X-OpenDesk-Delivery`, then
+retries on the durable-timer schedule **1m, 5m, 15m, 1h, 4h** (up to 6
+attempts), persisting `retrying` (+`next_retry_at`) after each failure and
+`delivered`/`dlq` at the end. `WEBHOOK_SIGNING_REQUIRED=true` rejects
+secret-less subscriptions (dev default `false` — deliveries are still
+signed whenever a secret exists).
+
+Tables `webhook_subscriptions` / `webhook_deliveries` live in the
+`notifications` database (`DATABASE_URL`; bootstrapped idempotently at
+startup — without it the platform degrades to 503 on `/v1/webhooks` and no
+dispatcher, the rest of the worker is unaffected).
+
+## Notifications outbox consumer (Wave 5 #7)
+
+`opendesk.notifications.outbox` (group `notification-outbox`) carries
+fire-and-forget notification commands. booking-service publishes
+`com.opendesk.notifications.SendPortalCode` when a customer requests a
+portal login code; this consumer delivers it through the same smtp/twilio
+bindings as the workflow activities (the plaintext code exists only in the
+event payload and the customer message — booking stores its SHA-256 hash).
 
 ## Signal bridge (SPEC-CRM §C2)
 
@@ -121,6 +159,11 @@ dial exactly as it now sits before the binding send.
 | `OUTBOUND_FROM_NUMBERS` | _(empty)_ | Comma-separated sender rotation pool; empty keeps `TWILIO_FROM` |
 | `REDIS_ADDR` | `redis:6379` | Shared redis for the pacer bucket + rotation counter |
 | `SHUTDOWN_TIMEOUT_SECONDS` | `20` | Graceful shutdown budget |
+| `DATABASE_URL` | _(empty = webhook platform disabled)_ | Postgres DSN for the `notifications` DB (webhook subscriptions/deliveries) |
+| `CONVERSATION_EVENTS_TOPIC` | `opendesk.conversation.events` | Second source topic of the webhook dispatcher |
+| `WEBHOOK_GROUP` | `notification-webhooks` | Consumer group of the webhook dispatcher |
+| `NOTIFICATIONS_OUTBOX_TOPIC` / `NOTIFICATIONS_OUTBOX_GROUP` | `opendesk.notifications.outbox` / `notification-outbox` | Portal-code command topic + group |
+| `WEBHOOK_SIGNING_REQUIRED` | `false` | Reject secret-less webhook subscriptions when `true` (prod) |
 
 ## Payments contract
 
