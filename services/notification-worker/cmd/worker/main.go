@@ -19,6 +19,7 @@ import (
 	"github.com/opendesk/notification-worker/internal/config"
 	"github.com/opendesk/notification-worker/internal/daprc"
 	"github.com/opendesk/notification-worker/internal/httpapi"
+	"github.com/opendesk/notification-worker/internal/pacer"
 	"github.com/opendesk/notification-worker/internal/packs"
 	"github.com/opendesk/notification-worker/internal/signals"
 	"github.com/opendesk/notification-worker/internal/workflows"
@@ -75,6 +76,18 @@ func run() error {
 		}, logger)
 	// User-facing base URL for waitlist claim links (SPEC-W3 §3).
 	acts.PublicBaseURL = cfg.PublicBaseURL
+	// Outbound CPS pacer + sender rotation (VOICE-SCALING §4 telephony):
+	// paces every workflow-driven outbound send via NotifyPaced.
+	acts.Pacer = pacer.New(pacer.Config{
+		CPS:         cfg.OutboundCPS,
+		Burst:       cfg.OutboundBurst,
+		Backend:     cfg.PacerBackend,
+		RedisAddr:   cfg.RedisAddr,
+		FromNumbers: cfg.OutboundFromNumbers,
+	}, logger)
+	logger.Info("outbound pacer configured",
+		zap.Float64("cps", cfg.OutboundCPS), zap.Int("burst", cfg.OutboundBurst),
+		zap.String("backend", cfg.PacerBackend), zap.Int("from_numbers", len(cfg.OutboundFromNumbers)))
 	// GDPR export/erase configuration (SPEC-W3 §2 innovation 13).
 	acts.Gdpr = activities.GdprDeps{
 		ConversationAppID: cfg.ConversationAppID,
@@ -123,6 +136,8 @@ func run() error {
 	// Waitlist backfill activities (SPEC-W3 §3 innovation 7)
 	w.RegisterActivityWithOptions(acts.ListWaitlistEntries, activity.RegisterOptions{Name: workflows.ActivityListWaitlistEntries})
 	w.RegisterActivityWithOptions(acts.SendWaitlistClaimNotification, activity.RegisterOptions{Name: workflows.ActivitySendWaitlistClaimNote})
+	// Outbound pacing wrapper: all workflow sends go through it (VOICE-SCALING §4).
+	w.RegisterActivityWithOptions(acts.NotifyPaced, activity.RegisterOptions{Name: workflows.ActivityNotifyPaced})
 	// Digital-twin cleanup activity (SPEC-W3 §3 innovation 12)
 	w.RegisterActivityWithOptions(acts.DeleteTwinTenant, activity.RegisterOptions{Name: workflows.ActivityDeleteTwinTenant})
 
