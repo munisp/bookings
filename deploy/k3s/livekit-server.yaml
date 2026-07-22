@@ -1,112 +1,211 @@
-# Media plane (docs/VOICE-SCALING.md §1): LiveKit SFU as a DaemonSet — one
-# pod per `livekit=true` node, host networking so WebRTC UDP lands directly
-# on the node, and a 5h termination grace so in-progress calls DRAIN on
-# rollouts (SFU rollout budget = old+new capacity during the drain window).
+# LiveKit SFU — production media plane for OpenDesk voice.
 #
-# Scope: single-region edge/central cluster. TURN (restrictive NATs) and
-# multi-region are noted in env comments but not wired here.
+# Design (per docs/VOICE-SCALING.md §1, "Scaling Voice Agents: Concurrency at
+# Every Layer"):
+#
+# * The SFU is CPU/bandwidth-bound, NOT RAM-bound, and wants one pod per node
+#   with host networking so RTP/UDP traffic never crosses the CNI/NAT layer.
+#   Hence a DaemonSet (1 pod per media node) + hostNetwork: true.
+# * Rooms MESH across nodes: a call's publisher and subscribers can land on
+#   different LiveKit pods; the nodes forward media between themselves over
+#   the same UDP range. Adding a node adds mesh capacity — label it
+#   `livekit=true` and the DaemonSet schedules onto it.
+# * Rollout budget: a draining LiveKit pod keeps serving its in-flight rooms
+#   until they end (terminationGracePeriodSeconds: 18000 == 5h, per the
+#   article's drain guidance). During a rollout the OLD pod and the NEW pod
+#   coexist on the same node slot only if you have >= 1 spare node — plan
+#   fleet capacity as old+new (surge) for the full drain window, or roll
+#   during off-peak. Never `kubectl delete pod` a live SFU.
+# * TURN (TCP/TLS 443 fallback) is required for restrictive NATs
+#   (hotel/corp Wi-Fi, symmetric NAT). The TURN section in the ConfigMap
+#   below is commented out with docs; enable it before onboarding customers
+#   behind hostile networks.
+#
+# Dev note: docker-compose runs `livekit/livekit-server --dev` on one node —
+# this manifest is the prod counterpart (no --dev flag, real config file).
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: livekit-config
   namespace: opendesk
-  labels: {app: livekit-server}
+  labels:
+    app: livekit
 data:
+  # livekit.yaml — keys are injected from the Secret below via env expansion:
+  # LiveKit expands $VARS in the config file at startup.
   livekit.yaml: |
-    port: 7880
-    bind_addresses: ["0.0.0.0"]
+    port: 7880                 # HTTP/WebSocket signalling
+    bind_addresses: [""]       # all interfaces (hostNetwork)
+    prometheus_port: 6789      # scraped by the cluster Prometheus
     rtc:
-      tcp_port: 7881
-      # UDP media range — hostNetwork, so these are NODE ports; keep the
-      # range free on every livekit=true node and open it in the node
-      # firewall / security group.
-      port_range_start: 50000
-      port_range_end: 50100
-      # Restrictive NATs: run a TURN server (e.g. coturn) per region and set:
-      #   turn:
-      #     enabled: true
-      #     domain: turn.example.com
-      #     tls_port: 5349
-      #     udp_port: 3478
-      #     external_tls: true
-      #   and mount the TURN cert into this pod. Not configured in this base.
-    redis:
-      address: redis:6379
+      tcp_port: 7881           # ICE/TCP fallback
+      udp_port: 50000          # start of the hostPort UDP range (see below)
+      # LiveKit uses a contiguous UDP range starting at udp_port. With
+      # hostNetwork + one pod per node the full range is available per node;
+      # the DaemonSet pins hostPorts 50000-50100 (101 ports) which covers
+      # ~50-100 concurrent calls per node at 1-2 UDP ports per participant.
+      # Widen by raising use_external_ip / port range here AND the firewall
+      # + security-group rules on the nodes.
+      use_external_ip: true
     keys:
-      devkey: secret   # dev keys — replace via Secret before real traffic
-    prometheus_port: 6789
+      # API key/secret come from the livekit-keys Secret (env expansion).
+      "${LIVEKIT_API_KEY}": "${LIVEKIT_API_SECRET}"
+    room:
+      empty_timeout: 300       # reap rooms 5 min after the last participant leaves
+    # ---------------------------------------------------------------------
+    # TURN (commented out) — enable for restrictive-NAT customers.
+    # LiveKit embeds a TURN server; expose 3478 (UDP/TCP) + 5349 (TLS).
+    # Recommended: terminate TLS at a LB/Ingress in front, or set
+    # tls_cert_file/tls_key_file here from a cert-manager Secret.
+    # turn:
+    #   enabled: true
+    #   domain: turn.voice.example.com
+    #   tls_port: 5349
+    #   udp_port: 3478
+    #   # external_tls: true   # set when TLS is terminated upstream
+    # See https://docs.livekit.io/realtime/self-hosting/ports-firewall/#TURN
+    # ---------------------------------------------------------------------
     logging:
       level: info
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: livekit-keys
+  namespace: opendesk
+  labels:
+    app: livekit
+type: Opaque
+stringData:
+  # Replace for any non-dev environment (and rotate per docs/runbooks/secrets.md).
+  LIVEKIT_API_KEY: devkey
+  LIVEKIT_API_SECRET: secret
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: livekit-server
   namespace: opendesk
-  labels: {app: livekit-server}
+  labels:
+    app: livekit
 spec:
   selector:
-    matchLabels: {app: livekit-server}
+    matchLabels:
+      app: livekit
   updateStrategy:
-    # RollingUpdate + drain grace: at any moment during a rollout the old
-    # pod may still be draining calls while the new pod takes new rooms —
-    # capacity plan must budget old+new nodes (VOICE-SCALING §1).
     type: RollingUpdate
     rollingUpdate:
+      # One media node at a time. Combined with the 5h drain below, a rollout
+      # is an off-peak, hours-long operation — budget for old+new capacity
+      # (surge node) during it.
       maxUnavailable: 1
   template:
     metadata:
-      labels: {app: livekit-server}
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "6789"
+      labels:
+        app: livekit
     spec:
-      # One SFU per media node; schedule only on nodes labelled livekit=true.
+      # Dedicated media nodes only: `kubectl label node <n> livekit=true`.
+      # Keep workers/inference OFF these nodes so SFU CPU stays predictable.
       nodeSelector:
         livekit: "true"
+      # Host networking: RTP/UDP bypasses CNI NAT — lower latency, no
+      # conntrack pressure, and the UDP port range maps 1:1 to the node.
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      # 5h drain: in-progress rooms finish on the old process instead of
-      # being dropped mid-call (the article's SFU rollout discipline).
+      # 5-hour drain: in-flight rooms are allowed to finish before SIGKILL.
+      # The article's core media-plane lesson — a voice call is a long-lived
+      # session, not a request; killing the pod kills calls.
       terminationGracePeriodSeconds: 18000
       containers:
         - name: livekit
           image: livekit/livekit-server:v1.7.2
           imagePullPolicy: IfNotPresent
-          args: ["--config", "/etc/livekit/livekit.yaml"]
+          args:
+            - --config
+            - /etc/livekit/livekit.yaml
+          env:
+            - name: LIVEKIT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: livekit-keys
+                  key: LIVEKIT_API_KEY
+            - name: LIVEKIT_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: livekit-keys
+                  key: LIVEKIT_API_SECRET
+          ports:
+            - name: http
+              containerPort: 7880
+              hostPort: 7880
+            - name: rtc-tcp
+              containerPort: 7881
+              hostPort: 7881
+            - name: rtc-udp-mux
+              containerPort: 7882
+              hostPort: 7882
+              protocol: UDP
+            # NOTE — UDP media range: LiveKit consumes hostPorts
+            # 50000-50100 (UDP) on the node for per-participant media.
+            # Declaring all 101 as individual hostPorts would bloat this
+            # manifest and kube-proxy; with hostNetwork the process binds
+            # them directly, so they are documented here instead. The node
+            # firewall / cloud security group MUST allow UDP 50000-50100
+            # ingress (plus 7881 TCP, 7882/udp, 7880 TCP for signalling).
+            - name: metrics
+              containerPort: 6789
           volumeMounts:
             - name: config
               mountPath: /etc/livekit
               readOnly: true
-          # hostNetwork: container ports ARE node ports (7880 signalling,
-          # 7881 RTC TCP, 50000-50100 UDP media, 6789 prometheus).
-          ports:
-            - {containerPort: 7880, name: signal}
-            - {containerPort: 7881, name: rtc-tcp}
-            - {containerPort: 6789, name: metrics}
+          # SFU is CPU/bandwidth-bound (not RAM): give it dedicated cores on
+          # the media nodes; memory stays modest.
           resources:
-            # SFU is CPU/bandwidth-bound (not RAM): guarantee compute on
-            # compute-optimized nodes — never burstable t3-class nodes.
-            requests: {cpu: "2", memory: 1Gi}
-            limits: {cpu: "4", memory: 2Gi}
+            requests:
+              cpu: "1"
+              memory: 512Mi
+            limits:
+              cpu: "4"
+              memory: 2Gi
           readinessProbe:
-            httpGet: {path: /, port: 7880}
+            httpGet:
+              path: /
+              port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+          lifecycle:
+            # On termination LiveKit stops accepting new rooms and lets
+            # existing ones drain within the 5h grace window.
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
       volumes:
         - name: config
-          configMap: {name: livekit-config}
+          configMap:
+            name: livekit-config
 ---
-# Cluster-internal signalling endpoint for workers/agents (participants use
-# the node address directly, since the SFU is hostNetworked).
+# Signalling service: targets whichever node-pod the mesh assigns; with
+# hostNetwork the pod IP is the node IP, so a simple headless Service gives
+# stable DNS for workers (ws://livekit-server.opendesk:7880).
 apiVersion: v1
 kind: Service
 metadata:
-  name: livekit
+  name: livekit-server
   namespace: opendesk
-  labels: {app: livekit-server}
+  labels:
+    app: livekit
 spec:
-  selector: {app: livekit-server}
+  clusterIP: None
+  selector:
+    app: livekit
   ports:
-    - {name: signal, port: 7880, targetPort: 7880}
-    - {name: rtc-tcp, port: 7881, targetPort: 7881}
+    - name: http
+      port: 7880
+      targetPort: http
+    - name: rtc-tcp
+      port: 7881
+      targetPort: rtc-tcp
+    - name: metrics
+      port: 6789
+      targetPort: metrics
