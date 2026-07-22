@@ -55,6 +55,10 @@ func New(ctx context.Context, databaseURL string) (*Store, error) {
 		pool.Close()
 		return nil, err
 	}
+	if err := s.ensureCRMColumns(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -401,24 +405,30 @@ func (s *Store) ListAvailabilityRules(ctx context.Context, tenantID, teamMemberI
 // Contacts
 // ---------------------------------------------------------------------------
 
-// Contact mirrors booking.contacts.
+// Contact mirrors booking.contacts. Source/ExternalID are set only for
+// contacts created by the reverse CRM sync (e.g. source='twenty'); they are
+// NULL for regular contacts.
 type Contact struct {
-	ID       uuid.UUID `json:"id"`
-	TenantID uuid.UUID `json:"tenant_id"`
-	Name     string    `json:"name"`
-	Phone    string    `json:"phone"`
-	Email    string    `json:"email"`
-	Notes    string    `json:"notes"`
+	ID         uuid.UUID `json:"id"`
+	TenantID   uuid.UUID `json:"tenant_id"`
+	Name       string    `json:"name"`
+	Phone      string    `json:"phone"`
+	Email      string    `json:"email"`
+	Notes      string    `json:"notes"`
+	Source     string    `json:"source,omitempty"`
+	ExternalID string    `json:"external_id,omitempty"`
 }
 
-// CreateContact inserts a contact.
+// CreateContact inserts a contact. Empty Source/ExternalID are stored as
+// NULL (regular contact).
 func (s *Store) CreateContact(ctx context.Context, c *Contact) error {
 	if c.ID == uuid.Nil {
 		c.ID = uuid.New()
 	}
-	const q = `INSERT INTO contacts (id, tenant_id, name, phone, email, notes) VALUES ($1,$2,$3,$4,$5,$6)`
+	const q = `INSERT INTO contacts (id, tenant_id, name, phone, email, notes, source, external_id)
+	           VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),NULLIF($8,''))`
 	return s.withTenant(ctx, c.TenantID, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, q, c.ID, c.TenantID, c.Name, c.Phone, c.Email, c.Notes); err != nil {
+		if _, err := tx.Exec(ctx, q, c.ID, c.TenantID, c.Name, c.Phone, c.Email, c.Notes, c.Source, c.ExternalID); err != nil {
 			return fmt.Errorf("insert contact: %w", err)
 		}
 		return nil

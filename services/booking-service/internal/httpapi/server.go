@@ -129,6 +129,19 @@ func NewRouter(d Deps) http.Handler {
 	// TenantOnboardingWorkflow seeds the default public site).
 	r.Post("/internal/sites", s.createSiteInternal)
 
+	// Reverse CRM sync endpoints (Twenty -> OpenDesk, SPEC-CRM §B), invoked
+	// by crm-sync-service via Dapr service invocation. Tenant resolution is
+	// the usual X-Tenant-Slug middleware; no Permify guard (internal only).
+	r.Route("/internal/contacts", func(r chi.Router) {
+		r.Use(s.tenantMiddleware)
+		r.Post("/upsert", s.upsertContactInternal)
+		r.Get("/", s.lookupContactInternal)
+	})
+	r.Route("/internal/bookings", func(r chi.Router) {
+		r.Use(s.tenantMiddleware)
+		r.Post("/{id}/crm-note", s.addBookingCRMNoteInternal)
+	})
+
 	return r
 }
 

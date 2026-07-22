@@ -23,6 +23,12 @@ const (
 	KindTenant  = "tenant"
 	KindContact = "contact"
 	KindBooking = "booking"
+	// KindBookingTask maps booking id -> Twenty task id for the reverse
+	// (Twenty -> OpenDesk) lookup: a task.updated DONE webhook resolves the
+	// OpenDesk booking via GetByTwentyID(KindBookingTask, taskID). It
+	// duplicates kind=booking deliberately so the reverse contract is
+	// explicit and stable even if the forward mapping evolves.
+	KindBookingTask = "booking_task"
 )
 
 // errPermanent marks failures that retrying cannot heal (bad payloads,
@@ -147,6 +153,11 @@ func (s *Syncer) handleBookingUpsert(ctx context.Context, d events.BookingData, 
 	if err := s.Map.Put(ctx, KindBooking, d.BookingID, taskID, tenantUUID); err != nil {
 		return err
 	}
+	// Reverse-lookup row for the Twenty -> OpenDesk direction (task.updated
+	// DONE webhooks resolve the booking via kind=booking_task).
+	if err := s.Map.Put(ctx, KindBookingTask, d.BookingID, taskID, tenantUUID); err != nil {
+		return err
+	}
 	if personID != "" {
 		// booking -> person edge used by the /v1/tasks helper (kind=booking_contact).
 		if err := s.Map.Put(ctx, syncmap.KindBookingContact, d.BookingID, personID, tenantUUID); err != nil {
@@ -170,6 +181,10 @@ func (s *Syncer) syncPerson(ctx context.Context, d events.BookingData, tenantUUI
 				twentyc.PersonFromContact(d.ContactName, d.Email, d.Phone)); err != nil {
 				s.Log.Warn("person update failed; keeping existing mapping",
 					zap.String("person_id", m.TwentyID), zap.Error(err))
+			} else if err := s.Map.Put(ctx, KindContact, d.ContactID, m.TwentyID, tenantUUID); err != nil {
+				// Refresh last_synced_at so the reverse worker's echo
+				// suppression sees that WE just wrote this person.
+				return "", err
 			}
 			return m.TwentyID, nil
 		} else if !errors.Is(err, syncmap.ErrNotFound) {

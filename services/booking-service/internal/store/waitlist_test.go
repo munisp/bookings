@@ -104,6 +104,11 @@ func newTestStore(t *testing.T) *Store {
 	if _, err := st.pool.Exec(ctx, testSchema); err != nil {
 		t.Fatalf("test schema: %v", err)
 	}
+	// store.New ran before the tables existed, so the reverse-CRM columns
+	// (contacts.source/external_id, bookings.crm_notes) are ensured again here.
+	if err := st.ensureCRMColumns(ctx); err != nil {
+		t.Fatalf("crm columns: %v", err)
+	}
 	return st
 }
 
