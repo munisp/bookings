@@ -1,0 +1,21 @@
+# LiveKit SIP inbound trunk (SIPInboundTrunkInfo) — Wave 5 #1.
+#
+# Apply with the LiveKit CLI (see setup.sh):
+#   lk sip inbound create deploy/livekit-sip/trunk-config.example.yaml
+#
+# The trunk terminates the carrier's SIP signalling on the LiveKit server and
+# claims the provisioned PSTN numbers. One trunk can carry many numbers;
+# each number is mapped to a tenant in the voice runtime (TENANT_PHONE_MAP,
+# see app/sip.py and docs/telephony.md).
+name: opendesk-inbound
+# E.164 numbers provisioned at the carrier and pointed at this trunk.
+numbers:
+  - "+15551234567"   # -> tenant "acme"  (TENANT_PHONE_MAP)
+  - "+15557654321"   # -> tenant "glow"  (TENANT_PHONE_MAP)
+# Optional hardening (uncomment for production):
+# allowed_addresses:      # only accept signalling from the carrier SBC IPs
+#   - "203.0.113.10/32"
+# auth_username: opendesk # digest auth when the carrier requires it
+# auth_password: changeme
+# krisp_enabled: true     # server-side noise cancellation (LiveKit Cloud)
+metadata: "opendesk wave-5 inbound receptionist trunk"

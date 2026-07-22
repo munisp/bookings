@@ -1,0 +1,27 @@
+# LiveKit SIP dispatch rule (CreateSIPDispatchRuleRequest) — Wave 5 #1.
+#
+# Apply with the LiveKit CLI (see setup.sh):
+#   lk sip dispatch create deploy/livekit-sip/dispatch-rule.yaml
+#
+# Callee dispatch: LiveKit creates one room PER DIALED NUMBER, named
+# `call-{dialed E.164 number}` (roomPrefix + callee). The voice worker
+# (app/sip.py) treats any `call-*` room as an inbound phone call, resolves
+# the tenant from the dialed number, attaches the SIP caller ID as the
+# session's confirmed phone and starts the normal receptionist flow.
+name: opendesk-inbound-receptionist
+# Scope the rule to the trunk above (fill the id printed by
+# `lk sip inbound create`, e.g. ["ST_abc123"]); empty = all inbound trunks.
+trunk_ids: []
+rule:
+  dispatchRuleCallee:
+    roomPrefix: call-
+    # randomize: false keeps the deterministic `call-{number}` room name the
+    # runtime's tenant resolution keys on.
+    randomize: false
+hide_phone_number: false
+metadata: "opendesk wave-5 inbound receptionist dispatch"
+# Alternative for per-caller rooms (one fresh room per caller instead of per
+# dialed number) — the worker accepts any `call-*` room either way:
+# rule:
+#   dispatchRuleIndividual:
+#     roomPrefix: call-

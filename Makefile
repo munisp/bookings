@@ -1,4 +1,4 @@
-.PHONY: up up-voice down logs ps config smoke seed topics dbt trino eval loadtest-voice clean
+.PHONY: up up-voice down logs ps config smoke seed topics dbt trino eval ab-test loadtest-voice validate-packs install-pack clean
 
 up:            ## Full platform (middleware + services + web)
 	docker compose up -d --build
@@ -27,6 +27,13 @@ topics:        ## Re-run Kafka topic init
 seed:          ## Seed demo tenant "acme" + catalog + availability
 	./scripts/seed-demo.sh
 
+validate-packs: ## Validate industry packs + registry checksums (Wave 5 #6)
+	python3 scripts/validate_pack.py validate industries/*.yaml
+	python3 scripts/validate_pack.py validate-index industries/index.json
+
+install-pack:  ## Install a community pack: make install-pack PACK=<url-or-path> [VERSION=v AUTHOR=a]
+	./scripts/install-pack.sh $(PACK) $(if $(VERSION),--version $(VERSION)) $(if $(AUTHOR),--author $(AUTHOR))
+
 smoke:         ## End-to-end smoke test through APISIX gateway
 	./scripts/smoke-test.sh
 
@@ -38,6 +45,9 @@ trino:         ## Open a trino CLI against the lakehouse
 
 eval:          ## Voice agent eval harness (scenarios -> /voice/chat + LLM judge)
 	python3 services/voice-agent-runtime/eval/eval.py $(EVAL_ARGS)
+
+ab-test:       ## A/B persona eval (needs EVAL_PERSONA_OVERRIDE=true runtime): make ab-test AB_ARGS="--tenant acme --persona-b services/voice-agent-runtime/eval/personas/salon_warm_concise.md [--promote]"
+	python3 services/voice-agent-runtime/eval/ab_test.py $(AB_ARGS)
 
 loadtest-voice: ## Voice load ramp 5->10->25->50 (needs live stack: make up-voice; see tests/load/README.md)
 	python3 tests/load/voice_ramp.py $(LOADTEST_ARGS)
