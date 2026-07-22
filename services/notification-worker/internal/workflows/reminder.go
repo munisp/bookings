@@ -83,7 +83,11 @@ func ReminderWorkflow(ctx workflow.Context, in ReminderInput) error {
 			}
 
 			state = "sending:" + kind
-			if err := workflow.ExecuteActivity(ctx, ActivitySendReminder, in, kind).Get(ctx, nil); err != nil {
+			// Reminders are outbound sends too: route through NotifyPaced so
+			// they share the fleet-wide CPS budget + sender rotation
+			// (same carrier spam-reputation discipline, VOICE-SCALING §4).
+			req := PacedSendRequest{Kind: PacedSendReminder, Reminder: &PacedReminderSend{Input: in, Kind: kind}}
+			if err := workflow.ExecuteActivity(ctx, ActivityNotifyPaced, req).Get(ctx, nil); err != nil {
 				logger.Error("SendReminder failed", "kind", kind, "error", err)
 			}
 			sent[kind] = true

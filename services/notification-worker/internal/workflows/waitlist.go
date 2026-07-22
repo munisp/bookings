@@ -62,7 +62,10 @@ func WaitlistBackfillWorkflow(ctx workflow.Context, in WaitlistBackfillInput) er
 	}
 	for _, e := range entries {
 		// A failed notification must not block the remaining candidates.
-		if err := workflow.ExecuteActivity(ctx, ActivitySendWaitlistClaimNote, in, e).Get(ctx, nil); err != nil {
+		// Sends go through NotifyPaced: the activity acquires an outbound
+		// CPS token + rotates the sender number before dialing (VOICE-SCALING §4).
+		req := PacedSendRequest{Kind: PacedSendWaitlistClaim, Waitlist: &PacedWaitlistSend{Input: in, Entry: e}}
+		if err := workflow.ExecuteActivity(ctx, ActivityNotifyPaced, req).Get(ctx, nil); err != nil {
 			logger.Error("waitlist claim notification failed", "entry_id", e.ID, "error", err)
 		}
 	}

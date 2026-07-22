@@ -38,41 +38,46 @@ func waitlistTestEntries(n int) []WaitlistEntry {
 	return out
 }
 
-// Happy path: five waiting entries → exactly the top 3 are notified.
+// registerPacedStubs registers the two activities the workflow invokes:
+// ListWaitlistEntries and the NotifyPaced pacing wrapper (VOICE-SCALING §4).
+func registerPacedStubs(env *testsuite.TestWorkflowEnvironment, entries []WaitlistEntry) {
+	env.RegisterActivityWithOptions(func(ctx context.Context, in WaitlistBackfillInput) ([]WaitlistEntry, error) {
+		return entries, nil
+	}, activity.RegisterOptions{Name: ActivityListWaitlistEntries})
+	env.RegisterActivityWithOptions(func(ctx context.Context, req PacedSendRequest) error {
+		return nil
+	}, activity.RegisterOptions{Name: ActivityNotifyPaced})
+}
+
+// Happy path: five waiting entries → exactly the top 3 are notified, in FIFO
+// order, and every send goes through the NotifyPaced pacing wrapper with the
+// waitlist_claim payload.
 func TestWaitlistBackfillWorkflowNotifiesTop3(t *testing.T) {
 	env := (&testsuite.WorkflowTestSuite{}).NewTestWorkflowEnvironment()
-
-	env.RegisterActivityWithOptions(func(ctx context.Context, in WaitlistBackfillInput) ([]WaitlistEntry, error) {
-		return waitlistTestEntries(5), nil
-	}, activity.RegisterOptions{Name: ActivityListWaitlistEntries})
-	env.RegisterActivityWithOptions(func(ctx context.Context, in WaitlistBackfillInput, e WaitlistEntry) error {
-		return nil
-	}, activity.RegisterOptions{Name: ActivitySendWaitlistClaimNote})
+	registerPacedStubs(env, waitlistTestEntries(5))
 
 	notified := make([]string, 0)
-	env.OnActivity(ActivitySendWaitlistClaimNote, mock.Anything, mock.Anything, mock.Anything).
+	env.OnActivity(ActivityNotifyPaced, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
-			notified = append(notified, args.Get(2).(WaitlistEntry).ID)
+			req := args.Get(1).(PacedSendRequest)
+			require.Equal(t, PacedSendWaitlistClaim, req.Kind, "every send is wrapped by NotifyPaced")
+			require.NotNil(t, req.Waitlist)
+			notified = append(notified, req.Waitlist.Entry.ID)
 		}).Return(nil)
 
 	env.ExecuteWorkflow(WaitlistBackfillWorkflow, waitlistTestInput())
 	require.True(t, env.IsWorkflowCompleted())
 	require.NoError(t, env.GetWorkflowError())
 	require.Equal(t, []string{"e-a", "e-b", "e-c"}, notified, "exactly the top 3, FIFO order")
+	env.AssertExpectations(t)
 }
 
 // Empty waitlist → no notifications, no error.
 func TestWaitlistBackfillWorkflowEmptyWaitlist(t *testing.T) {
 	env := (&testsuite.WorkflowTestSuite{}).NewTestWorkflowEnvironment()
+	registerPacedStubs(env, nil)
 
-	env.RegisterActivityWithOptions(func(ctx context.Context, in WaitlistBackfillInput) ([]WaitlistEntry, error) {
-		return nil, nil
-	}, activity.RegisterOptions{Name: ActivityListWaitlistEntries})
-	env.RegisterActivityWithOptions(func(ctx context.Context, in WaitlistBackfillInput, e WaitlistEntry) error {
-		return nil
-	}, activity.RegisterOptions{Name: ActivitySendWaitlistClaimNote})
-
-	env.OnActivity(ActivitySendWaitlistClaimNote, mock.Anything, mock.Anything, mock.Anything).
+	env.OnActivity(ActivityNotifyPaced, mock.Anything, mock.Anything).
 		Panic("must not notify when the waitlist is empty")
 
 	env.ExecuteWorkflow(WaitlistBackfillWorkflow, waitlistTestInput())
@@ -84,20 +89,16 @@ func TestWaitlistBackfillWorkflowEmptyWaitlist(t *testing.T) {
 func TestWaitlistBackfillWorkflowContinuesAfterNotifyFailure(t *testing.T) {
 	env := (&testsuite.WorkflowTestSuite{}).NewTestWorkflowEnvironment()
 	entries := waitlistTestEntries(2)
-
-	env.RegisterActivityWithOptions(func(ctx context.Context, in WaitlistBackfillInput) ([]WaitlistEntry, error) {
-		return entries, nil
-	}, activity.RegisterOptions{Name: ActivityListWaitlistEntries})
-	env.RegisterActivityWithOptions(func(ctx context.Context, in WaitlistBackfillInput, e WaitlistEntry) error {
-		return nil
-	}, activity.RegisterOptions{Name: ActivitySendWaitlistClaimNote})
+	registerPacedStubs(env, entries)
 
 	entryWithID := func(id string) interface{} {
-		return mock.MatchedBy(func(e WaitlistEntry) bool { return e.ID == id })
+		return mock.MatchedBy(func(req PacedSendRequest) bool {
+			return req.Kind == PacedSendWaitlistClaim && req.Waitlist != nil && req.Waitlist.Entry.ID == id
+		})
 	}
-	env.OnActivity(ActivitySendWaitlistClaimNote, mock.Anything, mock.Anything, entryWithID(entries[0].ID)).
+	env.OnActivity(ActivityNotifyPaced, mock.Anything, entryWithID(entries[0].ID)).
 		Return(errors.New("twilio down")).Once()
-	env.OnActivity(ActivitySendWaitlistClaimNote, mock.Anything, mock.Anything, entryWithID(entries[1].ID)).
+	env.OnActivity(ActivityNotifyPaced, mock.Anything, entryWithID(entries[1].ID)).
 		Return(nil).Once()
 
 	env.ExecuteWorkflow(WaitlistBackfillWorkflow, waitlistTestInput())
