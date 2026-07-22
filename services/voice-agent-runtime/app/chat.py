@@ -7,12 +7,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .async_tools import AsyncToolRunner, ToolAckPolicy
 from .config import Settings
 from .dapr_client import DaprClient
 from .escalation import LiveKitEscalation
 from .intent_router import find_agent, route_intent
 from .logging import get_logger
-from .pipeline.llm import OpenAICompatibleLLM, run_tool_loop, run_tool_loop_stream
+from .pipeline.llm import LLMInterface, run_tool_loop, run_tool_loop_stream
 from .plugin_tools import build_plugin_tools
 from .prompts import build_system_prompt
 from .session_state import SessionState, SessionStore
@@ -45,7 +46,7 @@ class ChatService:
         *,
         settings: Settings,
         dapr: DaprClient,
-        llm: OpenAICompatibleLLM,
+        llm: LLMInterface,
         sessions: SessionStore,
         escalation: LiveKitEscalation | None = None,
     ) -> None:
@@ -55,6 +56,11 @@ class ChatService:
         self._sessions = sessions
         self._histories = ChatHistory()
         self._escalation = escalation or LiveKitEscalation(settings)
+        # VOICE-SCALING §5: hard per-tool timeout on every Dapr tool call.
+        self._tool_runner = AsyncToolRunner(
+            timeout_s=settings.tool_timeout_s,
+            ack_grace_ms=settings.tool_ack_grace_ms,
+        )
 
     async def _prepare_turn(
         self, *, site_slug: str, message: str, conversation_id: str | None
@@ -145,7 +151,7 @@ class ChatService:
             self._llm,
             messages=history,
             tools=tool_layer.schemas(),
-            dispatch=tool_layer.dispatch,
+            dispatch=self._tool_runner.wrap_dispatch(tool_layer.dispatch),
         )
         history.append({"role": "assistant", "content": reply})
 
@@ -183,17 +189,25 @@ class ChatService:
             site_slug=site_slug, message=message, conversation_id=conversation_id
         )
 
+        # VOICE-SCALING §5 async tools (chat path): an immediate {"ack": ...}
+        # SSE event precedes every slow tool execution; the tool call itself
+        # runs under the hard timeout via the runner.
+        ack_policy = ToolAckPolicy.from_context(tool_layer.tenant_context)
+
         reply = ""
         trace: list[dict[str, Any]] = []
         async for event in run_tool_loop_stream(
             self._llm,
             messages=history,
             tools=tool_layer.schemas(),
-            dispatch=tool_layer.dispatch,
+            dispatch=self._tool_runner.wrap_dispatch(tool_layer.dispatch),
+            ack_for_tool=ack_policy.ack_for,
         ):
             kind = event["type"]
             if kind == "delta":
                 yield {"delta": event["text"]}
+            elif kind == "ack":
+                yield {"ack": event["text"], "tool": event["tool"]}
             elif kind == "tool":
                 yield {
                     "tool_call": {

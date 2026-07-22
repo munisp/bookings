@@ -7,6 +7,7 @@
          through the same tool layer (no audio)
 - POST /voice/elevenlabs/tools -> ElevenLabs tool webhook passthrough
          (mounted only when AGENT_BACKEND=elevenlabs)
+- GET  /metrics -> Prometheus text exposition (voice_* inference series)
 """
 
 from __future__ import annotations
@@ -17,16 +18,17 @@ from datetime import timedelta
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from . import metrics
 from .chat import ChatService
 from .config import Settings, load_settings
 from .dapr_client import DaprClient
 from .elevenlabs_adapter import ElevenLabsBackend
 from .livekit_worker import ROOM_PREFIX
 from .logging import configure_logging, get_logger
-from .pipeline.llm import OpenAICompatibleLLM
+from .pipeline.llm import build_llm
 from .session_state import SessionStore
 
 log = get_logger("control-plane")
@@ -59,11 +61,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     dapr = DaprClient(settings.dapr_base_url, settings.http_timeout_s)
     sessions = SessionStore()
-    llm = OpenAICompatibleLLM(
-        base_url=settings.llm_base_url,
-        model=settings.llm_model,
-        api_key=settings.llm_api_key,
-    )
+    # Primary LLM endpoint + optional circuit-broken fallback chain
+    # (LLM_FALLBACK_* envs, VOICE-SCALING §3).
+    llm = build_llm(settings)
     chat_service = ChatService(settings=settings, dapr=dapr, llm=llm, sessions=sessions)
     elevenlabs = (
         ElevenLabsBackend(settings=settings, dapr=dapr, sessions=sessions)
@@ -86,6 +86,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "service": "voice-agent-runtime",
             "backend": settings.agent_backend,
         }
+
+    @app.get("/metrics")
+    async def prometheus_metrics() -> PlainTextResponse:
+        """Hand-rolled Prometheus text exposition (VOICE-SCALING §3)."""
+        return PlainTextResponse(
+            metrics.render(), media_type="text/plain; version=0.0.4; charset=utf-8"
+        )
 
     @app.post("/voice/session", response_model=VoiceSessionResponse)
     async def create_voice_session(req: SessionRequest) -> VoiceSessionResponse:

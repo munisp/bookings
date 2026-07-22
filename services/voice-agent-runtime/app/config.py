@@ -45,6 +45,15 @@ class Settings:
     llm_base_url: str = "http://ollama:11434/v1"
     llm_model: str = "qwen3:8b"
     llm_api_key: str = "ollama"  # Ollama ignores the key; hosted providers require one
+    llm_timeout_s: float = 20.0  # per-call timeout; exceeding it trips fallback
+    # LLM fallback chain (VOICE-SCALING §3): secondary OpenAI-compatible
+    # endpoint used when the primary fails (connection error, 429, 5xx,
+    # timeout). Empty base URL disables the chain.
+    llm_fallback_base_url: str = ""
+    llm_fallback_model: str = ""
+    llm_fallback_api_key: str = ""
+    llm_cb_failures: int = 3  # consecutive primary failures before circuit opens
+    llm_cb_cooldown_s: float = 60.0  # fallback-only window before probing primary
 
     # STT (faster-whisper, in-process, lazy-loaded)
     whisper_model: str = "base"
@@ -68,6 +77,16 @@ class Settings:
     knowledge_snippet_count: int = 3
     knowledge_query: str = "opening hours services pricing"
     http_timeout_s: float = 15.0
+
+    # Worker plane (VOICE-SCALING §2): prewarming + load gating.
+    preload_models: bool = True  # eager whisper load + piper warmup at boot
+    agent_idle_processes: int = 2  # num_idle_processes warm job processes
+    load_threshold: float = 0.7  # CPU load (0..1) above which worker stops taking jobs
+
+    # Async tools (VOICE-SCALING §5): hard timeout per Dapr tool call and the
+    # grace window before the filler ack line is spoken (fast calls skip it).
+    tool_timeout_s: float = 4.0
+    tool_ack_grace_ms: int = 400
 
     # Phone-confirmation policy
     phone_confirmation_required: bool = True
@@ -115,6 +134,12 @@ def load_settings() -> Settings:
         # Optional pass-through to the OpenAI-compatible client: Ollama
         # ignores it, hosted providers (e.g. MiniMax) require it.
         llm_api_key=_env("LLM_API_KEY", "ollama"),
+        llm_timeout_s=float(os.environ.get("LLM_TIMEOUT", "20")),
+        llm_fallback_base_url=_env("LLM_FALLBACK_BASE_URL", ""),
+        llm_fallback_model=_env("LLM_FALLBACK_MODEL", ""),
+        llm_fallback_api_key=_env("LLM_FALLBACK_API_KEY", ""),
+        llm_cb_failures=_env_int("LLM_CB_FAILURES", 3),
+        llm_cb_cooldown_s=float(os.environ.get("LLM_CB_COOLDOWN_S", "60")),
         whisper_model=_env("WHISPER_MODEL", "base"),
         whisper_device=_env("WHISPER_DEVICE", "auto"),
         whisper_compute_type=_env("WHISPER_COMPUTE_TYPE", "int8"),
@@ -130,6 +155,11 @@ def load_settings() -> Settings:
         knowledge_snippet_count=_env_int("KNOWLEDGE_SNIPPET_COUNT", 3),
         knowledge_query=_env("KNOWLEDGE_QUERY", "opening hours services pricing"),
         http_timeout_s=float(os.environ.get("HTTP_TIMEOUT_S", "15")),
+        preload_models=_env("PRELOAD_MODELS", "true").lower() not in ("0", "false", "no"),
+        agent_idle_processes=_env_int("AGENT_IDLE_PROCESSES", 2),
+        load_threshold=float(os.environ.get("LOAD_THRESHOLD", "0.7")),
+        tool_timeout_s=float(os.environ.get("TOOL_TIMEOUT_SECONDS", "4")),
+        tool_ack_grace_ms=_env_int("TOOL_ACK_GRACE_MS", 400),
         phone_confirmation_required=_env("PHONE_CONFIRMATION_REQUIRED", "true").lower()
         not in ("0", "false", "no"),
         copilot_mode=_env("COPILOT_MODE", "true").lower() not in ("0", "false", "no"),
