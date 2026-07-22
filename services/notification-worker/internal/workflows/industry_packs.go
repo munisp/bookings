@@ -89,7 +89,9 @@ func ClinicIntakeWorkflow(ctx workflow.Context, in ClinicIntakeInput) error {
 	_ = fired
 
 	state = "sending-intake-reminder"
-	if err := workflow.ExecuteActivity(ctx, ActivitySendIntakeReminder, in).Get(ctx, nil); err != nil {
+	// Outbound send: route through NotifyPaced (CPS token + sender rotation).
+	intakeReq := PacedSendRequest{Kind: PacedSendIntakeReminder, Intake: &PacedIntakeReminderSend{Input: in}}
+	if err := workflow.ExecuteActivity(ctx, ActivityNotifyPaced, intakeReq).Get(ctx, nil); err != nil {
 		// notification failures do not fail the intake watch (same policy as
 		// SendConfirmation in the booking saga)
 		logger.Error("SendIntakeReminder failed", "error", err)
@@ -174,7 +176,7 @@ func SalonDepositWorkflow(ctx workflow.Context, in SalonDepositInput) error {
 
 	// Step 3: wait until the appointment end for a NoShow signal.
 	state = "awaiting-outcome"
-	_, signalled, cancelled := waitForSignalOrTimer(ctx, in.EndsAt.Sub(workflow.Now(ctx)), noShowCh)
+	_, signalled, cancelled = waitForSignalOrTimer(ctx, in.EndsAt.Sub(workflow.Now(ctx)), noShowCh)
 	if cancelled {
 		state = "stopped:cancelled"
 		return nil
@@ -226,7 +228,9 @@ func ConsultancyFollowupWorkflow(ctx workflow.Context, in ConsultancyFollowupInp
 	}
 
 	state = "sending-followup"
-	if err := workflow.ExecuteActivity(ctx, ActivitySendFollowupEmail, in).Get(ctx, nil); err != nil {
+	// Outbound send: route through NotifyPaced (CPS token + sender rotation).
+	followupReq := PacedSendRequest{Kind: PacedSendFollowUp, FollowUp: &PacedFollowupSend{Input: in}}
+	if err := workflow.ExecuteActivity(ctx, ActivityNotifyPaced, followupReq).Get(ctx, nil); err != nil {
 		logger.Error("SendFollowupEmail failed", "error", err)
 		state = "followup-email-failed"
 	}
@@ -246,7 +250,9 @@ func ConsultancyFollowupWorkflow(ctx workflow.Context, in ConsultancyFollowupInp
 	}
 
 	state = "sending-proposal-reminder"
-	if err := workflow.ExecuteActivity(ctx, ActivitySendProposalReminder, in).Get(ctx, nil); err != nil {
+	// Outbound send: route through NotifyPaced (CPS token + sender rotation).
+	proposalReq := PacedSendRequest{Kind: PacedSendProposalReminder, Proposal: &PacedProposalReminderSend{Input: in}}
+	if err := workflow.ExecuteActivity(ctx, ActivityNotifyPaced, proposalReq).Get(ctx, nil); err != nil {
 		logger.Error("SendProposalReminder failed", "error", err)
 		state = "proposal-reminder-failed"
 		return nil
@@ -288,7 +294,11 @@ func SupportEscalationWorkflow(ctx workflow.Context, in SupportEscalationInput) 
 	}
 
 	state = "escalating"
-	if err := workflow.ExecuteActivity(ctx, ActivityEscalateTicket, in).Get(ctx, nil); err != nil {
+	// Outbound send: route through NotifyPaced (CPS token + sender rotation);
+	// the escalation email + CRM priority event both happen inside the
+	// EscalateTicket dispatch.
+	escalateReq := PacedSendRequest{Kind: PacedSendStaffAlert, StaffAlert: &PacedStaffAlertSend{Input: in}}
+	if err := workflow.ExecuteActivity(ctx, ActivityNotifyPaced, escalateReq).Get(ctx, nil); err != nil {
 		state = "failed:escalate"
 		return err
 	}
