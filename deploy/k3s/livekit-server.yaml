@@ -1,0 +1,112 @@
+# Media plane (docs/VOICE-SCALING.md §1): LiveKit SFU as a DaemonSet — one
+# pod per `livekit=true` node, host networking so WebRTC UDP lands directly
+# on the node, and a 5h termination grace so in-progress calls DRAIN on
+# rollouts (SFU rollout budget = old+new capacity during the drain window).
+#
+# Scope: single-region edge/central cluster. TURN (restrictive NATs) and
+# multi-region are noted in env comments but not wired here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: livekit-config
+  namespace: opendesk
+  labels: {app: livekit-server}
+data:
+  livekit.yaml: |
+    port: 7880
+    bind_addresses: ["0.0.0.0"]
+    rtc:
+      tcp_port: 7881
+      # UDP media range — hostNetwork, so these are NODE ports; keep the
+      # range free on every livekit=true node and open it in the node
+      # firewall / security group.
+      port_range_start: 50000
+      port_range_end: 50100
+      # Restrictive NATs: run a TURN server (e.g. coturn) per region and set:
+      #   turn:
+      #     enabled: true
+      #     domain: turn.example.com
+      #     tls_port: 5349
+      #     udp_port: 3478
+      #     external_tls: true
+      #   and mount the TURN cert into this pod. Not configured in this base.
+    redis:
+      address: redis:6379
+    keys:
+      devkey: secret   # dev keys — replace via Secret before real traffic
+    prometheus_port: 6789
+    logging:
+      level: info
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: livekit-server
+  namespace: opendesk
+  labels: {app: livekit-server}
+spec:
+  selector:
+    matchLabels: {app: livekit-server}
+  updateStrategy:
+    # RollingUpdate + drain grace: at any moment during a rollout the old
+    # pod may still be draining calls while the new pod takes new rooms —
+    # capacity plan must budget old+new nodes (VOICE-SCALING §1).
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels: {app: livekit-server}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "6789"
+    spec:
+      # One SFU per media node; schedule only on nodes labelled livekit=true.
+      nodeSelector:
+        livekit: "true"
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # 5h drain: in-progress rooms finish on the old process instead of
+      # being dropped mid-call (the article's SFU rollout discipline).
+      terminationGracePeriodSeconds: 18000
+      containers:
+        - name: livekit
+          image: livekit/livekit-server:v1.7.2
+          imagePullPolicy: IfNotPresent
+          args: ["--config", "/etc/livekit/livekit.yaml"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/livekit
+              readOnly: true
+          # hostNetwork: container ports ARE node ports (7880 signalling,
+          # 7881 RTC TCP, 50000-50100 UDP media, 6789 prometheus).
+          ports:
+            - {containerPort: 7880, name: signal}
+            - {containerPort: 7881, name: rtc-tcp}
+            - {containerPort: 6789, name: metrics}
+          resources:
+            # SFU is CPU/bandwidth-bound (not RAM): guarantee compute on
+            # compute-optimized nodes — never burstable t3-class nodes.
+            requests: {cpu: "2", memory: 1Gi}
+            limits: {cpu: "4", memory: 2Gi}
+          readinessProbe:
+            httpGet: {path: /, port: 7880}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap: {name: livekit-config}
+---
+# Cluster-internal signalling endpoint for workers/agents (participants use
+# the node address directly, since the SFU is hostNetworked).
+apiVersion: v1
+kind: Service
+metadata:
+  name: livekit
+  namespace: opendesk
+  labels: {app: livekit-server}
+spec:
+  selector: {app: livekit-server}
+  ports:
+    - {name: signal, port: 7880, targetPort: 7880}
+    - {name: rtc-tcp, port: 7881, targetPort: 7881}
