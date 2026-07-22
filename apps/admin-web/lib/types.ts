@@ -1,36 +1,89 @@
-/** Shared API payload types for the admin web app. */
+/**
+ * Domain models mirrored from the platform services (see SPEC.md §7).
+ * Field names match the Postgres schemas / JSON contracts emitted by the
+ * Go and Python services behind the APISIX gateway.
+ */
+
+// ---------- identity-service ----------
 
 export interface Tenant {
   id: string;
   slug: string;
   name: string;
-  plan: string;
   timezone: string;
   currency: string;
   locale: string;
-  industry: string;
-  pack: IndustryPack | null;
+  /** Per-tenant vocabulary overrides, e.g. { "booking": "reservation" }. */
+  terminology: Record<string, string>;
+  plan: "free" | "pro" | "business" | string;
+  /** Industry pack id, e.g. "salon" | "clinic" | "consultancy" | "support-desk". */
+  industry?: string;
+  /** Resolved industry pack summary (absent on older identity-service builds). */
+  pack?: IndustryPackSummary | null;
   created_at: string;
 }
 
-/** Industry pack summary returned on GET /v1/tenants/{slug} (SPEC-CRM §C3). */
-export interface IndustryPack {
-  id: string;
-  displayName: string;
-  terminology: Record<string, string>;
-  bookingPolicy: BookingPolicy;
-  dashboardLabels: Record<string, string>;
-  agentPersona: string;
-  temporalWorkflow: string;
+/** Booking policy carried by an industry pack (SPEC-CRM §C). */
+export interface BookingPolicy {
+  depositPercent?: number;
+  noShowFeeCents?: number;
+  phoneConfirmation?: boolean;
+  intakeRequired?: boolean;
+  cancellationWindowHours?: number;
 }
 
-export interface BookingPolicy {
-  depositPercent: number;
-  noShowFeeCents: number;
-  phoneConfirmation: boolean;
-  intakeRequired: boolean;
-  cancellationWindowHours: number;
+/** Dashboard copy provided by an industry pack. */
+export interface DashboardLabels {
+  bookingSingular?: string;
+  bookingPlural?: string;
+  customerTerm?: string;
 }
+
+/** Resolved pack summary embedded in GET /v1/tenants/{slug}. */
+export interface IndustryPackSummary {
+  displayName?: string;
+  terminology?: Record<string, string>;
+  bookingPolicy?: BookingPolicy;
+  dashboardLabels?: DashboardLabels;
+}
+
+export interface PublicSite {
+  tenant_slug: string;
+  site_slug: string;
+  published: boolean;
+  theme: SiteTheme;
+  business_name: string;
+  tagline?: string;
+  timezone: string;
+  currency: string;
+  locale: string;
+}
+
+export interface SiteTheme {
+  /** hex colour, e.g. "#8a6d4b" (legacy snake_case keys kept for compatibility) */
+  accent?: string;
+  logo_url?: string;
+  hero_blurb?: string;
+  /** Wave-3 theme editor contract (PUT /v1/site theme jsonb, camelCase). */
+  primaryColor?: string;
+  logoUrl?: string;
+  heroTitle?: string;
+  heroSubtitle?: string;
+  /** layout template id, e.g. "classic" | "modern" | "compact" */
+  template?: string;
+}
+
+// ---------- booking-service ----------
+
+export type BookingStatus =
+  | "pending"
+  | "confirmed"
+  | "rescheduled"
+  | "cancelled"
+  | "completed"
+  | "no_show";
+
+export type BookingSource = "voice" | "chat" | "web" | "admin" | string;
 
 export interface Offering {
   id: string;
@@ -44,7 +97,6 @@ export interface Offering {
   capacity: number;
   bookable: boolean;
   created_at: string;
-  updated_at: string;
 }
 
 export interface TeamMember {
@@ -54,34 +106,19 @@ export interface TeamMember {
   email: string;
   role: string;
   active: boolean;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface AvailabilityRule {
   id: string;
   tenant_id: string;
   team_member_id: string;
-  weekday: number; // 0=Sunday
+  /** 0 = Sunday .. 6 = Saturday */
+  weekday: number;
+  /** minutes after midnight, local tenant time */
   start_min: number;
   end_min: number;
-  effective_from: string; // RFC3339
-  effective_to: string; // RFC3339
-}
-
-export interface Booking {
-  id: string;
-  tenant_id: string;
-  offering_id: string;
-  team_member_id: string;
-  contact_id: string;
-  starts_at: string;
-  ends_at: string;
-  status: "pending" | "confirmed" | "cancelled" | "no_show" | "completed";
-  source: string;
-  idempotency_key: string;
-  created_at: string;
-  updated_at: string;
+  effective_from?: string | null;
+  effective_to?: string | null;
 }
 
 export interface Contact {
@@ -91,113 +128,236 @@ export interface Contact {
   phone: string;
   email: string;
   notes: string;
-  source?: string;
-  external_id?: string;
-  created_at: string;
-  updated_at: string;
 }
 
-export interface Slot {
+export interface Booking {
+  id: string;
+  tenant_id: string;
+  offering_id: string;
+  team_member_id: string | null;
+  contact_id: string;
   starts_at: string;
   ends_at: string;
-}
-
-/** One slot annotated with its fragmentation score (GET ?optimize=true, Wave 5 #4). */
-export interface ScoredSlot extends Slot {
-  score: number;
-  reason: string;
-}
-
-/** GET /v1/availability/optimize — top 3 suggestions minimizing fragmentation. */
-export interface OptimizedAvailability {
-  offering_id: string;
-  team_member_id: string;
-  date: string;
-  suggestions: ScoredSlot[];
-}
-
-export interface AvailabilityResponse {
-  offering_id: string;
-  team_member_id: string;
-  slots: Slot[] | ScoredSlot[];
-  optimized?: boolean;
-}
-
-export interface Site {
-  id: string;
-  tenant_id: string;
-  tenant_slug: string;
-  slug: string;
-  display_name: string;
-  published: boolean;
-  theme: Record<string, unknown>;
-  created_at: string;
-}
-
-export interface PublicContext {
-  site: {
-    slug: string;
-    display_name: string;
-    tenant_id: string;
-    tenant_slug: string;
-    theme: Record<string, unknown>;
-  };
-  tenant: {
-    id?: string;
-    slug?: string;
-    name: string;
-    timezone: string;
-    currency: string;
-    locale: string;
-    terminology: Record<string, string>;
-    industry?: string;
-    pack?: IndustryPack | null;
-  };
-  offerings: Offering[];
-  team_members: TeamMember[];
-}
-
-/** Waitlist entry (SPEC-W3 §3 innovation 7). */
-export interface WaitlistEntry {
-  id: string;
-  tenant_id: string;
-  offering_id: string;
-  team_member_id?: string;
-  contact_name: string;
-  contact_phone: string;
-  contact_email: string;
-  preferred_from: string;
-  preferred_to: string;
-  status: "open" | "notified" | "claimed" | "expired";
-  claim_token_hash?: string;
-  claim_expires_at?: string;
-  notified_at?: string;
+  status: BookingStatus;
+  source: BookingSource;
+  idempotency_key: string;
   created_at: string;
   updated_at: string;
+  /** Joined/enriched fields the service may include in list responses. */
+  offering_name?: string;
+  contact_name?: string;
+  contact_phone?: string;
+  team_member_name?: string;
 }
 
-/** Outbound webhook subscription (Wave 5 #10, notification-worker). */
+export interface AvailabilitySlot {
+  starts_at: string;
+  ends_at: string;
+  team_member_id?: string | null;
+  remaining_capacity?: number;
+}
+
+// ---------- knowledge-service ----------
+
+export interface KnowledgeDocument {
+  id: string;
+  tenant_id: string;
+  title: string;
+  body: string;
+  source_url?: string | null;
+  created_at: string;
+}
+
+export interface KnowledgeSearchHit {
+  document_id: string;
+  chunk_id?: string;
+  title: string;
+  snippet: string;
+  score: number;
+}
+
+/**
+ * Self-improving KB draft (knowledge-service, innovation 4): created when a
+ * search scores below the suggestion threshold and the query looks like a
+ * question. Approve creates a real document; reject deletes the suggestion.
+ */
+export interface KbSuggestion {
+  id: string;
+  tenant_id: string;
+  /** the customer question that fell below the score threshold */
+  question: string;
+  suggested_title?: string | null;
+  suggested_answer?: string | null;
+  /** best RRF score seen for the question (for context) */
+  score?: number | null;
+  status: "pending" | "approved" | "rejected" | string;
+  created_at: string;
+}
+
+/** Text-to-SQL analytics result (knowledge-service POST /v1/analytics/query). */
+export interface AnalyticsQueryResult {
+  sql: string;
+  columns: string[];
+  /** rows as positional arrays aligned with `columns` */
+  rows: unknown[][];
+  truncated?: boolean;
+  explanation?: string;
+}
+
+// ---------- analytics-pipeline (revenue intelligence) ----------
+
+/** Pricing recommendation (analytics-pipeline GET /v1/recommendations). */
+export interface PricingRecommendation {
+  tenant_id: string;
+  offering_id: string;
+  offering_name?: string;
+  peak_hour_multiplier: number;
+  suggested_deposit_pct: number;
+  no_show_risk_band?: string;
+  generated_at?: string;
+}
+
+// ---------- payments-service ----------
+
+export interface AccountBalance {
+  tenant_id: string;
+  /** pending deposit holds */
+  deposits_cents: number;
+  /** captured, pay-out-able revenue */
+  revenue_cents: number;
+  /** lifetime paid out */
+  paid_out_cents: number;
+  currency: string;
+}
+
+export interface LedgerEntry {
+  id: string;
+  tenant_id: string;
+  /** TigerBeetle transfer code: 100 hold, 101 capture, 102 refund, 103 no-show fee, 104 payout */
+  code: number;
+  amount_cents: number;
+  currency: string;
+  booking_id?: string | null;
+  memo?: string;
+  created_at: string;
+}
+
+export interface Payout {
+  id: string;
+  tenant_id: string;
+  amount_cents: number;
+  currency: string;
+  status: "requested" | "settled" | "failed" | string;
+  /** Mojaloop transfer reference when settled cross-border. */
+  rail_ref?: string | null;
+  created_at: string;
+}
+
+// ---------- conversation / voice ----------
+
+export interface ChatRequest {
+  tenant: string;
+  message: string;
+  conversation_id?: string;
+  /** site slug when the chat originates from a public booking page */
+  site_slug?: string;
+}
+
+export interface ChatResponse {
+  conversation_id: string;
+  reply: string;
+  tool_calls?: { name: string; result: unknown }[];
+}
+
+export interface VoiceSession {
+  /** LiveKit access token for the browser client */
+  token: string;
+  /** LiveKit websocket URL, e.g. ws://localhost:7880 */
+  url: string;
+  room: string;
+}
+
+// ---------- gateway-edge WebSocket events ----------
+
+export interface BookingEvent {
+  type:
+    | "BookingCreated"
+    | "BookingConfirmed"
+    | "BookingRescheduled"
+    | "BookingCancelled"
+    | "BookingNoShow"
+    | string;
+  tenant_id: string;
+  booking: Booking;
+  time: string;
+}
+
+/**
+ * Warm-handoff escalation (voice runtime, innovation 1): the receptionist
+ * opened a LiveKit room and asks for a human. Fanned out on the /ws channel.
+ */
+export interface EscalationRequestedEvent {
+  type: "EscalationRequested";
+  data: {
+    conversation_id: string;
+    room: string;
+    join_token_staff: string;
+    site_slug?: string;
+  };
+  tenant_id?: string;
+  time?: string;
+}
+
+export type WsEvent = BookingEvent | EscalationRequestedEvent;
+
+// ---------- generic envelopes ----------
+
+export interface ListResponse<T> {
+  items: T[];
+  total?: number;
+}
+
+export interface ApiProblem {
+  error: string;
+  message?: string;
+  status?: number;
+}
+
+// ---------- notification-worker: outbound webhooks (Wave 5 #10) ----------
+
+/** Subscription as returned by GET /v1/webhooks (secret masked). */
 export interface WebhookSubscription {
   id: string;
-  tenant_id?: string;
   url: string;
   events: string[];
   active: boolean;
-  secret_set?: boolean;
-  /** Plaintext secret — present ONLY in the POST /v1/webhooks response. */
-  secret?: string;
+  secret_set: boolean;
   created_at: string;
 }
 
-/** Outbound webhook delivery record (Wave 5 #10). */
+/** Create response — the ONLY time the signing secret is shown. */
+export interface WebhookSubscriptionCreated {
+  id: string;
+  tenant_id: string;
+  url: string;
+  events: string[];
+  active: boolean;
+  created_at: string;
+  secret: string;
+}
+
+export type WebhookDeliveryStatus = "pending" | "retrying" | "delivered" | "dlq";
+
 export interface WebhookDelivery {
   id: string;
   sub_id: string;
+  tenant_id: string;
+  event_id: string;
   event_type: string;
-  status: "pending" | "retrying" | "delivered" | "dlq";
+  status: WebhookDeliveryStatus;
   attempts: number;
-  last_status_code?: number;
-  next_retry_at?: string;
+  last_status_code?: number | null;
+  next_retry_at?: string | null;
   created_at: string;
   updated_at: string;
 }
