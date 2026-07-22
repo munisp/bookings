@@ -2,6 +2,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -21,6 +22,12 @@ type Server struct {
 	Temporal  client.Client
 	TaskQueue string
 	Log       *zap.Logger
+
+	// Outbound webhook platform (Wave 5 #10); nil Webhooks disables the
+	// /v1/webhooks routes (503).
+	Webhooks               WebhookStore
+	ResolveTenant          func(ctx context.Context, slug string) (TenantRef, error)
+	WebhookSigningRequired bool
 }
 
 // NewRouter builds the chi router.
@@ -46,6 +53,16 @@ func NewRouter(s *Server) http.Handler {
 	// POST /v1/signals delivers a signal to a running workflow (staff UI:
 	// IntakeCompleted / Responded on the pack workflows, SPEC-CRM §C2).
 	r.Post("/v1/signals", s.sendSignal)
+
+	// Outbound webhook platform (Wave 5 #10): tenant-scoped via
+	// X-Tenant-Slug; reached from the UI through APISIX /api/notifications/*.
+	r.Route("/v1/webhooks", func(r chi.Router) {
+		r.Use(s.tenantMiddleware)
+		r.Post("/", s.createWebhook)
+		r.Get("/", s.listWebhooks)
+		r.Delete("/{id}", s.deleteWebhook)
+		r.Get("/{id}/deliveries", s.listWebhookDeliveries)
+	})
 	return r
 }
 
