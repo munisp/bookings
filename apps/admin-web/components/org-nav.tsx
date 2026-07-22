@@ -16,6 +16,7 @@ import {
   UsersRound,
   BarChart3,
   LineChart,
+  Webhook,
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -41,6 +42,7 @@ const items: NavItem[] = [
   { segment: "public-site", label: "Public Site", icon: Globe },
   { segment: "billing", label: "Billing", icon: CreditCard },
   { segment: "analytics", label: "Analytics", icon: BarChart3 },
+  { segment: "webhooks", label: "Webhooks", icon: Webhook },
   { external: CRM_URL, label: "CRM", icon: UsersRound },
   { external: GRAFANA_URL, label: "Grafana", icon: LineChart },
   { segment: "settings", label: "Settings", icon: Settings },
