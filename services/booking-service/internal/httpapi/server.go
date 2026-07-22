@@ -20,6 +20,22 @@ import (
 	"go.uber.org/zap"
 )
 
+// Authz outage policies (AUTHZ_OUTAGE_POLICY, Wave 5 #5).
+const (
+	// AuthzFailClosed denies requests when Permify is unreachable (default,
+	// production-safe).
+	AuthzFailClosed = "fail_closed"
+	// AuthzFailOpen allows requests when Permify is unreachable, logging
+	// CRITICAL — a dev convenience, never for production.
+	AuthzFailOpen = "fail_open"
+)
+
+// EventPublisher abstracts CloudEvent publishing (daprc.Client satisfies it)
+// so portal-code delivery is stubbed in tests.
+type EventPublisher interface {
+	PublishEvent(ctx context.Context, pubsub, topic string, data any) error
+}
+
 // Deps bundles server dependencies.
 type Deps struct {
 	Store         *store.Store
@@ -27,11 +43,23 @@ type Deps struct {
 	Resolver      *bookingops.TenantResolver
 	Authz         permify.Authorizer
 	AuthzDisabled bool // dev escape hatch (AUTHZ_DISABLED=true)
-	Dapr          *daprc.Client
-	IdentityAppID string
-	Gdpr          GdprStarter // may be nil when Temporal is unreachable
-	Cache         *cache.Cache // availability cache; nil disables caching
-	Logger        *zap.Logger
+	// AuthzOutagePolicy decides what happens when the Permify check itself
+	// errors: AuthzFailClosed (default) or AuthzFailOpen.
+	AuthzOutagePolicy string
+	Dapr              *daprc.Client
+	IdentityAppID     string
+	Gdpr              GdprStarter  // may be nil when Temporal is unreachable
+	Cache             *cache.Cache // availability cache; nil disables caching
+	Logger            *zap.Logger
+
+	// Customer portal (Wave 5 #7).
+	PortalSecret       string         // HMAC secret for portal JWTs (PORTAL_SECRET)
+	PubSubName         string         // Dapr pubsub component for the notifications outbox
+	NotificationsTopic string         // opendesk.notifications.outbox
+	Publisher          EventPublisher // nil → Dapr client is used
+	// TenantBySlug resolves tenant context for portal reschedule (timezone).
+	// nil → Resolver.BySlug is used.
+	TenantBySlug func(ctx context.Context, slug string) (bookingops.TenantInfo, error)
 }
 
 type ctxKey string
@@ -49,7 +77,10 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 
-	s := &server{d: d}
+	if d.TenantBySlug == nil && d.Resolver != nil {
+		d.TenantBySlug = d.Resolver.BySlug
+	}
+	s := &server{d: d, portalLimiter: newPortalRateLimiter()}
 
 	r.Get("/healthz", s.healthz)
 
@@ -74,6 +105,8 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/{id}/availability", s.getAvailabilityRules)
 		})
 		r.Get("/availability", s.getAvailability)
+		// Wave 5 #4: ranked slot suggestions minimizing calendar fragmentation.
+		r.Get("/availability/optimize", s.getOptimizedAvailability)
 		r.Get("/site", s.getSite)
 		r.With(s.require("manage_catalog")).Put("/site", s.updateSite)
 		r.Route("/contacts", func(r chi.Router) {
@@ -114,6 +147,20 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/context", s.publicContext)
 		r.Get("/availability", s.publicAvailability)
 		r.Post("/bookings", s.publicCreateBooking)
+		// Customer self-service portal (Wave 5 #7): magic-code login. The
+		// authenticated half lives under /portal (portal JWT middleware).
+		r.Post("/portal/request", s.portalRequestCode)
+		r.Post("/portal/verify", s.portalVerifyCode)
+	})
+
+	// Customer self-service portal, contact-scoped via the portal JWT
+	// issued by /public/sites/{slug}/portal/verify (no Keycloak account —
+	// APISIX must expose /api/bookings/portal/* without openid-connect).
+	r.Route("/portal", func(r chi.Router) {
+		r.Use(s.portalMiddleware)
+		r.Get("/bookings", s.portalListBookings)
+		r.Post("/bookings/{id}/reschedule", s.portalRescheduleBooking)
+		r.Post("/bookings/{id}/cancel", s.portalCancelBooking)
 	})
 
 	// Temporal activity endpoints invoked by the saga workers via Dapr
@@ -145,7 +192,10 @@ func NewRouter(d Deps) http.Handler {
 	return r
 }
 
-type server struct{ d Deps }
+type server struct {
+	d             Deps
+	portalLimiter *portalRateLimiter
+}
 
 func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
@@ -208,6 +258,13 @@ func (s *server) require(permission string) func(http.Handler) http.Handler {
 			allowed, err := s.d.Authz.Check(r.Context(), tenant.ID.String(),
 				"user:"+userID, permission, "organization:"+tenant.ID.String())
 			if err != nil {
+				if s.d.AuthzOutagePolicy == AuthzFailOpen {
+					s.d.Logger.Error("CRITICAL: permify unreachable, allowing request (AUTHZ_OUTAGE_POLICY=fail_open) — dev only",
+						zap.String("tenant_id", tenant.ID.String()), zap.String("user", userID),
+						zap.String("permission", permission), zap.Error(err))
+					next.ServeHTTP(w, r)
+					return
+				}
 				s.d.Logger.Error("permify check failed", zap.Error(err))
 				writeError(w, http.StatusBadGateway, "authorization service error")
 				return
