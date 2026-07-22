@@ -21,9 +21,9 @@ func registerPackStubs(env *testsuite.TestWorkflowEnvironment) {
 	env.RegisterActivityWithOptions(func(ctx context.Context, in SalonDepositInput) error { return nil },
 		activity.RegisterOptions{Name: ActivityChargeNoShowFee})
 	env.RegisterActivityWithOptions(func(ctx context.Context, in ClinicIntakeInput) error { return nil },
-		activity.RegisterOptions{Name: ActivitySendIntakeReminder})
-	env.RegisterActivityWithOptions(func(ctx context.Context, in ClinicIntakeInput) error { return nil },
 		activity.RegisterOptions{Name: ActivityCreateStaffAlertTask})
+	env.RegisterActivityWithOptions(func(ctx context.Context, in ConsultancyFollowupInput) error { return nil },
+		activity.RegisterOptions{Name: ActivityCreateCRMFollowupTask})
 }
 
 func clinicTestInput() ClinicIntakeInput {
@@ -49,8 +49,11 @@ func TestClinicIntakeWorkflow_TimeoutAlertsStaff(t *testing.T) {
 	track := func(name string) func(mock.Arguments) {
 		return func(args mock.Arguments) { order = append(order, name) }
 	}
-	env.OnActivity(ActivitySendIntakeReminder, mock.Anything, mock.Anything).
-		Run(track("intake-reminder")).Return(nil).Once()
+	// The T-72h intake reminder is CPS-paced via NotifyPaced.
+	env.OnActivity(ActivityNotifyPaced, mock.Anything, mock.MatchedBy(func(req PacedSendRequest) bool {
+		return req.Kind == PacedSendIntakeReminder && req.Intake != nil &&
+			req.Intake.Input.BookingID == "b-clinic-1"
+	})).Run(track("intake-reminder")).Return(nil).Once()
 	env.OnActivity(ActivityCreateStaffAlertTask, mock.Anything, mock.Anything).
 		Run(track("staff-alert")).Return(nil).Once()
 
@@ -71,8 +74,9 @@ func TestClinicIntakeWorkflow_IntakeCompletedSignal(t *testing.T) {
 	registerPackStubs(env)
 
 	var order []string
-	env.OnActivity(ActivitySendIntakeReminder, mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) { order = append(order, "intake-reminder") }).Return(nil).Once()
+	env.OnActivity(ActivityNotifyPaced, mock.Anything, mock.MatchedBy(func(req PacedSendRequest) bool {
+		return req.Kind == PacedSendIntakeReminder && req.Intake != nil
+	})).Run(func(args mock.Arguments) { order = append(order, "intake-reminder") }).Return(nil).Once()
 
 	// Patient completes the intake form 2 hours after the reminder.
 	env.RegisterDelayedCallback(func() {
@@ -159,5 +163,101 @@ func TestSalonDepositWorkflow_ReminderWhenDepositMissing(t *testing.T) {
 	require.NoError(t, env.GetWorkflowError())
 	require.Equal(t, []string{"verify", "deposit-reminder"}, order,
 		"missing deposit inside the window must trigger the reminder only")
+	env.AssertExpectations(t)
+}
+
+func consultancyTestInput() ConsultancyFollowupInput {
+	return ConsultancyFollowupInput{
+		BookingID:    "b-consult-1",
+		TenantID:     "t-1",
+		TenantSlug:   "acme-consult",
+		ContactName:  "Dana Founder",
+		ContactEmail: "dana@example.com",
+		EndsAt:       time.Now().Add(time.Hour), // session ends in 1h
+	}
+}
+
+// Full consultancy path: after the session ends the follow-up email and the
+// CRM task fire, then the T+7d proposal reminder. Both outbound sends are
+// CPS-paced via NotifyPaced (follow_up / proposal_reminder kinds).
+func TestConsultancyFollowupWorkflow_PacedFollowupAndProposal(t *testing.T) {
+	ts := &testsuite.WorkflowTestSuite{}
+	env := ts.NewTestWorkflowEnvironment()
+	env.RegisterWorkflow(ConsultancyFollowupWorkflow)
+	registerPackStubs(env)
+
+	var order []string
+	track := func(name string) func(mock.Arguments) {
+		return func(args mock.Arguments) { order = append(order, name) }
+	}
+	env.OnActivity(ActivityNotifyPaced, mock.Anything, mock.MatchedBy(func(req PacedSendRequest) bool {
+		return req.Kind == PacedSendFollowUp && req.FollowUp != nil &&
+			req.FollowUp.Input.BookingID == "b-consult-1"
+	})).Run(track("follow-up")).Return(nil).Once()
+	env.OnActivity(ActivityCreateCRMFollowupTask, mock.Anything, mock.Anything).
+		Run(track("crm-task")).Return(nil).Once()
+	env.OnActivity(ActivityNotifyPaced, mock.Anything, mock.MatchedBy(func(req PacedSendRequest) bool {
+		return req.Kind == PacedSendProposalReminder && req.Proposal != nil &&
+			req.Proposal.Input.BookingID == "b-consult-1"
+	})).Run(track("proposal-reminder")).Return(nil).Once()
+
+	env.ExecuteWorkflow(ConsultancyFollowupWorkflow, consultancyTestInput())
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	require.Equal(t, []string{"follow-up", "crm-task", "proposal-reminder"}, order,
+		"session end → paced follow-up, CRM task, paced T+7d proposal reminder")
+	env.AssertExpectations(t)
+}
+
+func supportTestInput() SupportEscalationInput {
+	return SupportEscalationInput{
+		BookingID:             "b-support-1",
+		TenantID:              "t-1",
+		TenantSlug:            "acme-support",
+		ContactName:           "Irate Customer",
+		ContactEmail:          "irate@example.com",
+		CreatedAt:             time.Now(),
+		FirstResponseSLAHours: 4,
+	}
+}
+
+// SLA breach path: no Responded signal within the 4h SLA → the escalation
+// (owner email + CRM priority event) is CPS-paced via NotifyPaced
+// (staff_alert kind).
+func TestSupportEscalationWorkflow_PacedEscalationOnSLABreach(t *testing.T) {
+	ts := &testsuite.WorkflowTestSuite{}
+	env := ts.NewTestWorkflowEnvironment()
+	env.RegisterWorkflow(SupportEscalationWorkflow)
+	registerPackStubs(env)
+
+	var escalated bool
+	env.OnActivity(ActivityNotifyPaced, mock.Anything, mock.MatchedBy(func(req PacedSendRequest) bool {
+		return req.Kind == PacedSendStaffAlert && req.StaffAlert != nil &&
+			req.StaffAlert.Input.BookingID == "b-support-1" &&
+			req.StaffAlert.Input.FirstResponseSLAHours == 4
+	})).Run(func(args mock.Arguments) { escalated = true }).Return(nil).Once()
+
+	env.ExecuteWorkflow(SupportEscalationWorkflow, supportTestInput())
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	require.True(t, escalated, "SLA breach must escalate via NotifyPaced staff_alert")
+	env.AssertExpectations(t)
+}
+
+// Responded-within-SLA path: the Responded signal before the deadline closes
+// the ticket watch without any escalation.
+func TestSupportEscalationWorkflow_RespondedWithinSLA(t *testing.T) {
+	ts := &testsuite.WorkflowTestSuite{}
+	env := ts.NewTestWorkflowEnvironment()
+	env.RegisterWorkflow(SupportEscalationWorkflow)
+	registerPackStubs(env)
+
+	env.RegisterDelayedCallback(func() {
+		env.SignalWorkflow(SignalResponded, nil)
+	}, time.Hour)
+
+	env.ExecuteWorkflow(SupportEscalationWorkflow, supportTestInput())
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
 	env.AssertExpectations(t)
 }
