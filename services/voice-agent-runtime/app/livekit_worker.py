@@ -40,12 +40,13 @@ from livekit.agents.pipeline import VoicePipelineAgent
 from livekit.plugins import openai as lk_openai
 from livekit.plugins import silero
 
-from . import metrics
+from . import metrics, sip
 from .async_tools import AsyncToolRunner, ToolAckPolicy
 from .config import Settings, load_settings
 from .dapr_client import DaprClient, DaprError
 from .events import new_cloudevent, session_lifecycle_data
 from .logging import configure_logging, get_logger
+from .multilang import MultilangState, voice_for_language
 from .pipeline.stt import FasterWhisperSTT
 from .pipeline.tts import PiperTTS
 from .prompts import build_system_prompt
@@ -133,15 +134,20 @@ def cpu_load_fnc() -> float:
 # Bridges: app pipeline stages -> livekit-agents 0.10 node types
 # ---------------------------------------------------------------------------
 class WhisperSTTNode(lk_stt.STT):
-    """Bridge FasterWhisperSTT into the LiveKit pipeline."""
+    """Bridge FasterWhisperSTT into the LiveKit pipeline.
 
-    def __init__(self, impl: FasterWhisperSTT) -> None:
+    Wave 5 #3: when whisper auto-detects the spoken language it is reported
+    on the SpeechEvent and forwarded to ``on_language`` (the per-session
+    MultilangState hook that swaps the piper voice + locale instruction)."""
+
+    def __init__(self, impl: FasterWhisperSTT, on_language=None) -> None:
         super().__init__(
             capabilities=lk_stt.STTCapabilities(
                 streaming=False, interim_results=False
             )
         )
         self._impl = impl
+        self._on_language = on_language
 
     async def recognize(
         self, buffer: lk_utils.AudioBuffer, *, language: str | None = None
@@ -153,9 +159,15 @@ class WhisperSTTNode(lk_stt.STT):
             channels=frame.num_channels,
             language=language,
         )
+        detected = language or self._impl.last_detected_language or ""
+        if detected and self._on_language is not None:
+            try:
+                self._on_language(detected)
+            except Exception as exc:  # noqa: BLE001 - never break STT
+                log.warning("language hook failed", error=str(exc)[:200])
         return lk_stt.SpeechEvent(
             type=lk_stt.SpeechEventType.FINAL_TRANSCRIPT,
-            alternatives=[lk_stt.SpeechData(text=text, language=language or "")],
+            alternatives=[lk_stt.SpeechData(text=text, language=detected)],
         )
 
 
@@ -379,12 +391,24 @@ async def build_voice_agent(
     dapr: DaprClient,
     site_slug: str,
     conversation_id: str,
+    sip_call: "sip.InboundCallContext | None" = None,
 ) -> tuple[VoicePipelineAgent, TenantContext, SessionState]:
-    """Bootstrap tenant context and assemble the VoicePipelineAgent."""
+    """Bootstrap tenant context and assemble the VoicePipelineAgent.
+
+    Wave 5 #1: ``sip_call`` (from app/sip.bootstrap_inbound_call) attaches
+    the carrier-asserted caller ID as the session's confirmed phone before
+    the prompt is rendered, so the receptionist skips the read-back step.
+    """
     ctx = await fetch_tenant_context(dapr, settings, site_slug)
     session = SessionState(conversation_id=conversation_id, site_slug=site_slug)
+    caller_phone = ""
+    if sip_call is not None:
+        sip.attach_caller_id(session, sip_call.caller_phone)
+        caller_phone = session.confirmed_phone or ""
     tool_layer = ToolLayer(dapr=dapr, settings=settings, ctx=ctx, session=session)
-    system_prompt = build_system_prompt(ctx, conversation_id=conversation_id)
+    system_prompt = build_system_prompt(
+        ctx, conversation_id=conversation_id, caller_phone=caller_phone or None
+    )
 
     chat_ctx = lk_llm.ChatContext().append(role="system", text=system_prompt)
     runner = AsyncToolRunner(
@@ -401,9 +425,39 @@ async def build_voice_agent(
     stt_impl = _PREWARMED.get("stt") or _build_stt(settings)
     tts_impl = _PREWARMED.get("tts") or _build_tts(settings)
 
+    # Wave 5 #3 multilingual receptionist: tenant locale sets the default
+    # language; whisper detection switches it per turn, swapping the piper
+    # voice (PIPER_VOICE_MAP, default-voice fallback) and re-rendering the
+    # system prompt with the per-turn locale instruction.
+    ml_state = MultilangState.from_context(ctx)
+    session.active_language = ml_state.active_language
+    tts_impl.voice = voice_for_language(
+        ml_state.active_language, settings.piper_voice_map, settings.piper_voice
+    )
+
+    def _on_language(detected: str) -> None:
+        if not ml_state.observe(detected):
+            return
+        session.active_language = ml_state.active_language
+        tts_impl.voice = voice_for_language(
+            ml_state.active_language, settings.piper_voice_map, settings.piper_voice
+        )
+        new_prompt = build_system_prompt(
+            ctx,
+            conversation_id=conversation_id,
+            language=ml_state.active_language,
+            caller_phone=session.confirmed_phone,
+        )
+        try:
+            msgs = agent.chat_ctx.messages
+            if msgs and msgs[0].role == "system":
+                msgs[0].content = [new_prompt]
+        except Exception as exc:  # noqa: BLE001 - prompt stays at default
+            log.warning("locale instruction swap failed", error=str(exc)[:200])
+
     agent = VoicePipelineAgent(
         vad=silero.VAD.load(),
-        stt=WhisperSTTNode(stt_impl),
+        stt=WhisperSTTNode(stt_impl, on_language=_on_language),
         # NOTE (VOICE-SCALING §3): the livekit-plugins-openai LLM node cannot
         # hot-swap endpoints mid-process, so the LLM fallback chain
         # (app/pipeline/llm.py FallbackLLM) covers the chat/tool-loop paths;
@@ -431,13 +485,33 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     await ctx.connect()
     room_name = ctx.room.name or ""
-    site_slug = site_slug_from_room(room_name)
+    # Wave 5 #1 SIP inbound: `call-*` rooms (dispatch-rule.yaml) or rooms
+    # joined by a SIP participant are PSTN calls. Resolve the tenant from the
+    # dialed number (TENANT_PHONE_MAP) instead of the `site-{slug}` web
+    # convention; the caller ID becomes the confirmed phone (app/sip.py).
+    sip_call: sip.InboundCallContext | None = None
+    participants = list(getattr(ctx.room, "remote_participants", {}).values())
+    if sip.is_sip_room(room_name) or any(sip.is_sip_participant(p) for p in participants):
+        try:
+            sip_call = sip.bootstrap_inbound_call(settings, room_name, participants)
+        except sip.SipTenantResolutionError as exc:
+            log.error("sip tenant resolution failed", room=room_name, error=str(exc))
+            await dapr.aclose()
+            return
+        site_slug = sip_call.site_slug
+    else:
+        site_slug = site_slug_from_room(room_name)
     conversation_id = str(uuid.uuid4())
-    log.info("voice session starting", room=room_name, site_slug=site_slug)
+    log.info(
+        "voice session starting",
+        room=room_name,
+        site_slug=site_slug,
+        channel="phone" if sip_call is not None else "web",
+    )
 
     try:
         agent, tenant_ctx, session = await build_voice_agent(
-            settings, dapr, site_slug, conversation_id
+            settings, dapr, site_slug, conversation_id, sip_call=sip_call
         )
     except DaprError as exc:
         log.error("session bootstrap failed", site_slug=site_slug, error=str(exc))
