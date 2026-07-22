@@ -176,7 +176,7 @@ func SalonDepositWorkflow(ctx workflow.Context, in SalonDepositInput) error {
 
 	// Step 3: wait until the appointment end for a NoShow signal.
 	state = "awaiting-outcome"
-	_, signalled, cancelled = waitForSignalOrTimer(ctx, in.EndsAt.Sub(workflow.Now(ctx)), noShowCh)
+	_, signalled, cancelled := waitForSignalOrTimer(ctx, in.EndsAt.Sub(workflow.Now(ctx)), noShowCh)
 	if cancelled {
 		state = "stopped:cancelled"
 		return nil
