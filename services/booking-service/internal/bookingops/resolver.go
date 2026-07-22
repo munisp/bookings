@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/opendesk/booking-service/internal/daprc"
+	"go.uber.org/zap"
 )
 
 // TenantInfo is the tenant context resolved from identity-service.
@@ -56,32 +57,62 @@ func (t TenantInfo) Location() *time.Location {
 	return loc
 }
 
+// DefaultTenantCacheTTL is used when TENANT_CACHE_TTL_SECONDS is unset.
+const DefaultTenantCacheTTL = 5 * time.Minute
+
 // TenantResolver resolves tenant slugs to IDs/context via Dapr service
-// invocation to identity-service, with a small in-memory cache.
+// invocation to identity-service, with an in-memory TTL cache.
+//
+// Resilience (Wave 5 #5): a cached entry is served until its TTL expires;
+// when identity-service then times out or errors on refresh, the EXPIRED
+// entry is served stale (logged) rather than failing every tenant-scoped
+// request. A tenant that was never resolved successfully still errors.
 type TenantResolver struct {
 	dapr  *daprc.Client
 	appID string
+	ttl   time.Duration
+	log   *zap.Logger
 
 	mu    sync.Mutex
-	cache map[string]TenantInfo
+	cache map[string]tenantCacheEntry
 }
 
-// NewTenantResolver builds the resolver.
-func NewTenantResolver(d *daprc.Client, identityAppID string) *TenantResolver {
-	return &TenantResolver{dapr: d, appID: identityAppID, cache: map[string]TenantInfo{}}
+type tenantCacheEntry struct {
+	info      TenantInfo
+	fetchedAt time.Time
+}
+
+// NewTenantResolver builds the resolver. ttl <= 0 falls back to
+// DefaultTenantCacheTTL.
+func NewTenantResolver(d *daprc.Client, identityAppID string, ttl time.Duration, log *zap.Logger) *TenantResolver {
+	if ttl <= 0 {
+		ttl = DefaultTenantCacheTTL
+	}
+	if log == nil {
+		log = zap.NewNop()
+	}
+	return &TenantResolver{dapr: d, appID: identityAppID, ttl: ttl, log: log, cache: map[string]tenantCacheEntry{}}
 }
 
 // BySlug resolves (and caches) a tenant by slug.
 func (r *TenantResolver) BySlug(ctx context.Context, slug string) (TenantInfo, error) {
 	r.mu.Lock()
-	if t, ok := r.cache[slug]; ok {
-		r.mu.Unlock()
-		return t, nil
-	}
+	entry, cached := r.cache[slug]
+	fresh := cached && time.Since(entry.fetchedAt) < r.ttl
 	r.mu.Unlock()
+	if fresh {
+		return entry.info, nil
+	}
 
 	var t TenantInfo
 	if err := r.dapr.InvokeService(ctx, r.appID, "v1/tenants/"+slug, nil, &t); err != nil {
+		if cached {
+			// identity-service timeout/outage: serve the expired entry
+			// stale instead of failing every request for this tenant.
+			r.log.Warn("identity-service unreachable; serving stale tenant context",
+				zap.String("slug", slug), zap.Duration("age", time.Since(entry.fetchedAt)), zap.Error(err))
+			return entry.info, nil
+		}
 		return TenantInfo{}, fmt.Errorf("resolve tenant %q: %w", slug, err)
 	}
 	if t.ID == uuid.Nil {
@@ -89,7 +120,7 @@ func (r *TenantResolver) BySlug(ctx context.Context, slug string) (TenantInfo, e
 	}
 	t.Slug = slug
 	r.mu.Lock()
-	r.cache[slug] = t
+	r.cache[slug] = tenantCacheEntry{info: t, fetchedAt: time.Now()}
 	r.mu.Unlock()
 	return t, nil
 }

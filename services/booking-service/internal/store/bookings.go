@@ -49,16 +49,41 @@ func scanBooking(row pgx.Row) (Booking, error) {
 }
 
 // OutboxEvent is one transactional-outbox row awaiting dispatch.
+// ID is a UUID, matching 01-booking-schema.sql (outbox.id UUID).
 type OutboxEvent struct {
-	ID          int64           `json:"id"`
+	ID          uuid.UUID       `json:"id"`
 	AggregateID uuid.UUID       `json:"aggregate_id"`
 	Topic       string          `json:"topic"`
 	Payload     json.RawMessage `json:"payload"`
 }
 
+// ExtraOutbox is an additional outbox row written in the same transaction
+// as a booking mutation (e.g. the usage-metering record accompanying
+// BookingCreated/BookingConfirmed, Wave 5 #9).
+type ExtraOutbox struct {
+	Topic   string
+	Payload []byte
+}
+
+// insertExtraOutbox appends companion outbox rows inside tx.
+func insertExtraOutbox(ctx context.Context, tx pgx.Tx, aggregateID uuid.UUID, extra []ExtraOutbox) error {
+	for _, e := range extra {
+		if e.Topic == "" || e.Payload == nil {
+			continue
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO outbox (aggregate_id, topic, payload) VALUES ($1,$2,$3)`,
+			aggregateID, e.Topic, e.Payload); err != nil {
+			return fmt.Errorf("insert extra outbox: %w", err)
+		}
+	}
+	return nil
+}
+
 // CreateBookingTx inserts a booking and its outbox event atomically
-// (transactional outbox pattern, SPEC §6/§9).
-func (s *Store) CreateBookingTx(ctx context.Context, b *Booking, outboxTopic string, eventPayload []byte) error {
+// (transactional outbox pattern, SPEC §6/§9). Optional extra outbox rows
+// (usage metering) join the same transaction.
+func (s *Store) CreateBookingTx(ctx context.Context, b *Booking, outboxTopic string, eventPayload []byte, extra ...ExtraOutbox) error {
 	if b.ID == uuid.Nil {
 		b.ID = uuid.New()
 	}
@@ -80,7 +105,7 @@ func (s *Store) CreateBookingTx(ctx context.Context, b *Booking, outboxTopic str
 			b.ID, outboxTopic, eventPayload); err != nil {
 			return fmt.Errorf("insert outbox: %w", err)
 		}
-		return nil
+		return insertExtraOutbox(ctx, tx, b.ID, extra)
 	})
 }
 
@@ -123,7 +148,10 @@ type BookingFilter struct {
 	// Contact filters bookings to those whose linked contact matches this
 	// phone number OR e-mail address (GDPR export lookup, SPEC-W3 §2).
 	Contact string
-	Limit   int
+	// ContactID restricts to one contact's bookings (customer portal,
+	// Wave 5 #7 — exact id match, no contact-table join needed).
+	ContactID *uuid.UUID
+	Limit     int
 }
 
 // ListBookings returns tenant bookings newest-first, honoring the filter.
@@ -148,6 +176,11 @@ func (s *Store) ListBookings(ctx context.Context, tenantID uuid.UUID, f BookingF
 		n++
 		q += fmt.Sprintf(` AND contact_id IN (SELECT id FROM contacts WHERE tenant_id=$1 AND (phone=$%[1]d OR email=$%[1]d))`, n)
 		args = append(args, f.Contact)
+	}
+	if f.ContactID != nil {
+		n++
+		q += fmt.Sprintf(` AND contact_id=$%d`, n)
+		args = append(args, *f.ContactID)
 	}
 	if f.From != nil {
 		n++
@@ -210,8 +243,9 @@ func (s *Store) ListBookingsForRange(ctx context.Context, tenantID, teamMemberID
 }
 
 // SetBookingStatus updates status (+updated_at) and appends an outbox event
-// atomically. eventPayload may be nil to skip the outbox write.
-func (s *Store) SetBookingStatus(ctx context.Context, tenantID, id uuid.UUID, status, outboxTopic string, eventPayload []byte) error {
+// atomically. eventPayload may be nil to skip the outbox write. Optional
+// extra outbox rows (usage metering) join the same transaction.
+func (s *Store) SetBookingStatus(ctx context.Context, tenantID, id uuid.UUID, status, outboxTopic string, eventPayload []byte, extra ...ExtraOutbox) error {
 	return s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
 			`UPDATE bookings SET status=$3, updated_at=now() WHERE tenant_id=$1 AND id=$2`,
@@ -229,7 +263,7 @@ func (s *Store) SetBookingStatus(ctx context.Context, tenantID, id uuid.UUID, st
 				return fmt.Errorf("insert outbox: %w", err)
 			}
 		}
-		return nil
+		return insertExtraOutbox(ctx, tx, id, extra)
 	})
 }
 
@@ -260,7 +294,7 @@ func (s *Store) RescheduleBooking(ctx context.Context, tenantID, id uuid.UUID, s
 // (SPEC-W3 §2 innovation 13): name is replaced with 'erased' and phone/email
 // with their salted SHA-256 hashes so booking history stays referentially
 // intact while PII is irreversibly pseudonymized. Returns rows affected.
-// Empty phone/email values are ignored (never match NULL/'' columns).
+// Empty phone/email values are ignored (never match NULL/” columns).
 func (s *Store) AnonymizeContacts(ctx context.Context, tenantID uuid.UUID, phone, email string) (int64, error) {
 	if phone == "" && email == "" {
 		return 0, nil
@@ -331,7 +365,7 @@ func (s *Store) FetchUnsentOutbox(ctx context.Context, limit int) ([]OutboxEvent
 // MarkOutboxSent marks an outbox row dispatched.
 //
 // NOTE (RLS): cross-tenant dispatcher path — see FetchUnsentOutbox.
-func (s *Store) MarkOutboxSent(ctx context.Context, id int64) error {
+func (s *Store) MarkOutboxSent(ctx context.Context, id uuid.UUID) error {
 	_, err := s.pool.Exec(ctx, `UPDATE outbox SET sent_at=now() WHERE id=$1`, id)
 	return err
 }
