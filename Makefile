@@ -1,4 +1,4 @@
-.PHONY: up up-voice down logs ps config smoke seed topics dbt trino eval clean
+.PHONY: up up-voice down logs ps config smoke seed topics dbt trino eval loadtest-voice clean
 
 up:            ## Full platform (middleware + services + web)
 	docker compose up -d --build
@@ -38,3 +38,6 @@ trino:         ## Open a trino CLI against the lakehouse
 
 eval:          ## Voice agent eval harness (scenarios -> /voice/chat + LLM judge)
 	python3 services/voice-agent-runtime/eval/eval.py $(EVAL_ARGS)
+
+loadtest-voice: ## Voice load ramp 5->10->25->50 (needs live stack: make up-voice; see tests/load/README.md)
+	python3 tests/load/voice_ramp.py $(LOADTEST_ARGS)
