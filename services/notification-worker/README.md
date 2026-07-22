@@ -54,8 +54,11 @@ Channels without a recipient (empty email/phone) are skipped.
 
 ## Outbound CPS pacing & sender rotation
 
-(docs/VOICE-SCALING.md §4 telephony plane; applied to SPEC-W3 §3
-innovation 7 waitlist backfill and reminder sends.)
+(docs/VOICE-SCALING.md §4 telephony plane. **Full coverage**: every
+workflow-driven outbound send is CPS-paced — booking confirmations, T-24h /
+T-1h reminders, no-show follow-ups, waitlist claim links, and all industry
+pack sends: salon deposit reminders, clinic intake reminders, consultancy
+follow-up + proposal reminders, and support-desk SLA-breach escalations.)
 
 The carrier sets two ceilings, not us: **channel count** (hard cap of
 simultaneous calls on the SIP trunk) and **CPS** (call/message *start
@@ -131,13 +134,17 @@ per SPEC §9 are applied inside payments-service).
 ## Tests
 
 `internal/workflows/booking_saga_test.go` uses the Temporal testsuite:
-happy-path ordering, reverse-order compensation (`VoidHold` → `ReleaseSlot`)
+happy-path ordering (with the confirmation send asserted to go through
+`NotifyPaced`), reverse-order compensation (`VoidHold` → `ReleaseSlot`)
 on `ConfirmBooking` failure, and no compensation when `ReserveSlot` fails.
-`waitlist_test.go` / `reminder_test.go` assert every outbound send goes
-through the `NotifyPaced` wrapper with order preserved;
+`waitlist_test.go` / `reminder_test.go` / `industry_packs_test.go` assert
+every outbound send (waitlist claim, reminder, deposit reminder, intake
+reminder, follow-up, proposal reminder, staff escalation) goes through the
+`NotifyPaced` wrapper with order preserved;
 `internal/pacer/pacer_test.go` covers burst enforcement, round-robin
 rotation (local + redis-INCR) and redis-down fail-open;
-`internal/activities/paced_test.go` covers pacing-before-dispatch.
+`internal/activities/paced_test.go` covers pacing-before-dispatch and
+payload validation for every paced kind.
 
 ## Run
 
