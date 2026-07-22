@@ -1,9 +1,10 @@
 # Twenty CRM Integration
 
-OpenDesk syncs tenants, contacts and bookings one-way into a self-hosted
-[Twenty](https://twenty.com) CRM, and accepts a minimal reverse webhook intake
-from Twenty back into the platform. This guide covers the architecture, setup,
-event mapping, rate limits and day-2 operations.
+OpenDesk syncs tenants, contacts and bookings **bidirectionally** with a
+self-hosted [Twenty](https://twenty.com) CRM: forward (OpenDesk → Twenty)
+via Kafka event consumers, and reverse (Twenty → OpenDesk) via HMAC-verified
+webhooks and a dedicated reverse worker. This guide covers the architecture,
+setup, event mapping, loop prevention, rate limits and day-2 operations.
 
 ## Architecture
 
@@ -18,15 +19,19 @@ event mapping, rate limits and day-2 operations.
                         │                                    │  token bucket 90 req/min        │
                         │   opendesk.dlq ◄── poison messages─┘  (3 attempts, then DLQ)         │
                         │                                                                      │
-                        │   crm-sync ── REST (Bearer API key) ──► twenty-api (:3000)           │
+                        │   FORWARD:  crm-sync ── REST (Bearer API key) ──► twenty-api (:3000) │
                         │        │                                  │     ▲                    │
                         │        │ sync_map (crm_sync DB)           │     │ Bull-MQ jobs       │
                         │        ▼                                  ▼     │                    │
                         │     postgres                        twenty-worker ──► twenty-redis   │
-                        │   (DBs: twenty, crm_sync)                                                │
+                        │   (DBs: twenty, crm_sync, booking)                                     │
                         │                                                                      │
-                        │   Twenty webhook ──► POST :7010/webhooks/twenty (HMAC) ──► Kafka      │
-                        │                                          opendesk.crm.events         │
+                        │   REVERSE: Twenty webhook ──► POST :7010/webhooks/twenty (HMAC)      │
+                        │        └─► Kafka opendesk.crm.events ──► reverse worker              │
+                        │              (consumer group "crm-sync-reverse", DLQ after 3)        │
+                        │        └─► Dapr invoke booking-service:                              │
+                        │              POST /internal/contacts/upsert      (person → contact)  │
+                        │              POST /internal/bookings/{id}/crm-note (task DONE)       │
                         └──────────────────────────────────────────────────────────────────────┘
 
  Browser:  CRM UI  http://localhost:3100        (linked from admin-web sidebar)
@@ -78,34 +83,100 @@ All Twenty calls use `Authorization: Bearer <key>` against
 | Kafka topic | CloudEvent type | Twenty action | sync_map rows |
 |---|---|---|---|
 | `opendesk.identity.events` | `TenantProvisioned` | Upsert **Company** `{name, domainName: "<slug>.opendesk.local"}` | `kind=tenant` |
-| `opendesk.booking.events` | `BookingCreated` / `BookingConfirmed` | `findPerson` by contact email/phone (`GET /rest/people?filter=emails.primaryEmail[eq]...`), then POST or PATCH **Person**; create **Task** `"{offering} appointment at {starts_at}"` linked to the person | `kind=contact`, `kind=booking` |
+| `opendesk.booking.events` | `BookingCreated` / `BookingConfirmed` | `findPerson` by contact email/phone (`GET /rest/people?filter=emails.primaryEmail[eq]...`), then POST or PATCH **Person**; create **Task** `"{offering} appointment at {starts_at}"` linked to the person | `kind=contact`, `kind=booking`, `kind=booking_task`, `kind=booking_contact` |
 | `opendesk.booking.events` | `BookingCancelled` | PATCH the Task — status done + cancellation note | `kind=booking` (updated) |
 | `opendesk.booking.events` | `BookingRescheduled` | PATCH the Task `dueDate` | `kind=booking` (updated) |
 | `opendesk.conversation.events` | `ToolInvoked(book_appointment)` | Optional **Note** on the person: “Booked via AI receptionist” | — |
+
+Every forward-sync `sync_map` write also stamps `last_synced_at` — the input
+for reverse echo suppression (below). `kind=booking_task` (booking id → task
+id) exists so the reverse worker can resolve a `task.updated` webhook back to
+its OpenDesk booking.
 
 Upserts are keyed by `sync_map`
 `UNIQUE(kind, opendesk_id, tenant_id)`, so re-delivered events are idempotent.
 Events for unknown tenants/companies are retried (transient ordering) and
 dead-lettered after 3 attempts — see Troubleshooting.
 
-## Reverse intake (Twenty → OpenDesk)
+## Reverse sync (Twenty → OpenDesk)
 
-Twenty webhooks (Settings → API & Webhooks → Webhooks) can point at:
+The reverse direction is fully wired: Twenty webhook → HMAC intake →
+`opendesk.crm.events` → reverse worker (Kafka consumer group
+`crm-sync-reverse`, DLQ after 3 attempts) → Dapr service invocation into
+booking-service internal endpoints (no Permify — internal, Dapr-invoked
+only; tenant resolution via the usual `X-Tenant-Slug` middleware).
 
+### Setup: register the webhook
+
+```bash
+export TWENTY_API_KEY=eyJhbGciOi...     # Twenty Settings → API & Webhooks
+export TWENTY_WEBHOOK_SECRET=...        # must equal crm-sync's TWENTY_WEBHOOK_SECRET
+./infra/twenty/setup-webhooks.sh        # idempotent; skips when already registered
 ```
-POST http://localhost:7010/webhooks/twenty
-```
+
+The script creates one webhook (`targetUrl
+http://crm-sync:7010/webhooks/twenty`, operations `person.created`,
+`person.updated`, `task.updated`) via `POST /rest/webhooks`, after a
+`GET /rest/webhooks` presence check. Field names follow Twenty's v1 REST
+webhook object schema and are **version-sensitive** — see the script
+comments and [infra/twenty/README.md](../../infra/twenty/README.md).
 
 crm-sync verifies the `X-Twenty-Webhook-Signature` HMAC header against
-`TWENTY_WEBHOOK_SECRET`, logs the payload, and emits a CloudEvent to
-`opendesk.crm.events` (topic created by `infra/kafka/create-topics.sh`).
-Consumers downstream (e.g. the support-desk escalation workflow) can subscribe
-via Dapr pub/sub — the `crm-sync` app-id is already in the pubsub component
-scopes.
+`TWENTY_WEBHOOK_SECRET` and emits the payload as a CloudEvent
+(`com.opendesk.crm.twenty.<event>`) to `opendesk.crm.events`. Requests with
+a missing/invalid signature get `401` — check `docker compose logs crm-sync`
+for `invalid webhook signature` entries.
 
-Requests with a missing/invalid signature get `401` and are **not** retried by
-the sender unless the webhook is re-enabled — check
-`docker compose logs crm-sync` for `invalid webhook signature` entries.
+### Reverse mapping
+
+| Webhook event | Reverse worker action | booking-service endpoint |
+|---|---|---|
+| `person.created` / `person.updated` | Fetch full Person (`GET /rest/people/{id}`), resolve tenant slug, upsert contact keyed by phone OR email with `source='twenty'`, `external_id=<personId>` | `POST /internal/contacts/upsert` (+ `GET /internal/contacts?phone=\|email=` lookup helper) |
+| `task.updated` (status `DONE`) | Resolve booking via `sync_map kind=booking_task` (reverse lookup by Twenty task id), append a CRM note to the booking's `crm_notes` JSONB array | `POST /internal/bookings/{id}/crm-note` |
+
+Tenant slug resolution order for persons: (1) `sync_map` contact mapping
+(person → contact → tenant → company domain `<slug>.opendesk.local` via
+`GET /rest/companies/{id}`); (2) fallback via the person's company when the
+company is a mapped tenant (`sync_map kind=tenant`) — domain → slug. Events
+whose tenant cannot be resolved are **skipped + acked** (foreign-workspace
+records are not poison).
+
+booking-service schema additions are bootstrapped idempotently at startup
+(`ALTER TABLE ... IF NOT EXISTS`): nullable `contacts.source` /
+`contacts.external_id` (+ index) and `bookings.crm_notes JSONB DEFAULT '[]'`.
+
+### Loop prevention
+
+* **No outbound events from the reverse write path.** Contacts have no
+  outbox in booking-service (only booking lifecycle mutations do), and the
+  crm-note append deliberately bypasses the outbox — so a reverse-synced
+  change can never re-enter the forward event flow.
+* **Echo suppression.** Every forward person write stamps
+  `sync_map.last_synced_at`. An inbound `person.created`/`person.updated`
+  webhook for a person whose mapping was stamped within the last **10s**
+  (`REVERSE_ECHO_WINDOW_SECONDS`) is our own write echoing back and is
+  skipped + acked (metric `reverse_echo_suppressed`).
+* **`task.updated` gating.** Only tasks with a `sync_map kind=booking_task`
+  mapping (i.e. tasks OpenDesk created) produce crm-notes; tasks created
+  inside Twenty are ignored.
+
+**Remaining race (accepted, documented):** a person edited by a human in
+Twenty within the same 10s window as a forward-sync write is suppressed
+together with the echo and only converges on the next Twenty-side edit
+(forward last-write-wins within the window). One known echo the window does
+NOT cover: the forward sync closes cancelled bookings as task `DONE`, which
+fires `task.updated` — the reverse worker then appends a "marked DONE"
+crm-note to an already-cancelled booking. The note is cosmetic (the booking
+status is untouched); deduplicating it would require tracking forward task
+patches in `sync_map`, which we deliberately did not add.
+
+### Reverse worker configuration
+
+| Env | Default | Purpose |
+|---|---|---|
+| `REVERSE_CONSUMER_GROUP` | `crm-sync-reverse` | Kafka group for `opendesk.crm.events` |
+| `BOOKING_APP_ID` | `booking` | Dapr app-id of booking-service |
+| `REVERSE_ECHO_WINDOW_SECONDS` | `10` | Echo suppression window |
 
 ## Rate limits & batching
 

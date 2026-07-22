@@ -18,7 +18,7 @@ Services are written in **Go** (identity, booking, notification), **Rust** (paym
 | Single shared agent, no durability | Temporal sagas with compensation; idempotent commands; DLQ |
 | No analytics | Lakehouse bronze/silver/gold marts, Trino SQL, containment & revenue metrics |
 | No edge security | APISIX + OpenAppSec WAF + rate limits |
-| No CRM | Self-hosted Twenty CRM with one-way event sync (crm-sync) + reverse webhook intake |
+| No CRM | Self-hosted Twenty CRM with bidirectional CRM sync (crm-sync): forward event sync + reverse webhook worker with echo suppression |
 | One-size-fits-all flows | Industry workflow packs (salon, clinic, consultancy, support-desk): terminology, booking policy, persona + Temporal workflow variants |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.

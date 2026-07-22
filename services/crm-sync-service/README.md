@@ -1,7 +1,8 @@
 # crm-sync-service
 
-OpenDesk → [Twenty CRM](https://twenty.com) one-way sync (SPEC-CRM §B), plus a
-minimal reverse webhook intake. Go 1.23, chi router, zap, pgx/v5,
+OpenDesk ⇄ [Twenty CRM](https://twenty.com) **bidirectional** sync (SPEC-CRM
+§B): forward event sync (OpenDesk → Twenty) plus a reverse webhook worker
+(Twenty → OpenDesk) with echo suppression. Go 1.23, chi router, zap, pgx/v5,
 segmentio/kafka-go. Listens on **:7010**, Dapr app-id `crm-sync` (sidecar
 `daprd-crm-sync`).
 
@@ -37,6 +38,21 @@ segmentio/kafka-go. Listens on **:7010**, Dapr app-id `crm-sync` (sidecar
      `staff_alert` tasks are created **unlinked** by design; `follow_up`
      tries to link but degrades to unlinked (warning log) rather than 4xx.
      Response `201 {taskId, personId, linked}`.
+3. **Reverse worker** (consumer group `crm-sync-reverse`, topic
+   `opendesk.crm.events`, DLQ after 3 attempts) — Twenty → OpenDesk:
+   | CloudEvent type | Action |
+   |---|---|
+   | `com.opendesk.crm.twenty.person.created` / `…person.updated` | `GET /rest/people/{id}`, resolve tenant slug (contact mapping → company domain `<slug>.opendesk.local`; fallback: person.companyId + `sync_map kind=tenant`), Dapr-invoke booking-service `POST /internal/contacts/upsert` with `external_source='twenty'`, `external_id=<personId>`, `X-Tenant-Slug` header |
+   | `com.opendesk.crm.twenty.task.updated` (status `DONE`) | Reverse-lookup booking via `sync_map kind=booking_task`, Dapr-invoke `POST /internal/bookings/{id}/crm-note` |
+   Loop prevention: booking-service's reverse write path emits **no** events
+   (contacts have no outbox; crm-notes bypass it), and inbound person
+   webhooks within `REVERSE_ECHO_WINDOW_SECONDS` (default 10s) of our own
+   forward write (`sync_map.last_synced_at`) are suppressed + acked. The
+   forward syncer writes `sync_map(kind='booking_task')` alongside
+   `kind='booking'` for every task it creates. See
+   [docs/integrations/twenty-crm.md](../../docs/integrations/twenty-crm.md)
+   for the full reverse design, the remaining 10s-window race and the
+   cancel-vs-DONE echo caveat.
 
 ## Environment
 
@@ -49,7 +65,10 @@ segmentio/kafka-go. Listens on **:7010**, Dapr app-id `crm-sync` (sidecar
 | `BOOKING_EVENTS_TOPIC` | `opendesk.booking.events` | |
 | `CONVERSATION_EVENTS_TOPIC` | `opendesk.conversation.events` | |
 | `CRM_EVENTS_TOPIC` | `opendesk.crm.events` | webhook egress topic (provisioned by `infra/kafka/create-topics.sh`) |
-| `CONSUMER_GROUP` | `crm-sync` | shared by all three readers |
+| `CONSUMER_GROUP` | `crm-sync` | shared by the forward readers |
+| `REVERSE_CONSUMER_GROUP` | `crm-sync-reverse` | reverse worker group on `CRM_EVENTS_TOPIC` |
+| `BOOKING_APP_ID` | `booking` | Dapr app-id for reverse invokes into booking-service |
+| `REVERSE_ECHO_WINDOW_SECONDS` | `10` | suppress inbound person webhooks this soon after our own forward write |
 | `DLQ_TOPIC` | `opendesk.dlq` | |
 | `CONSUMER_ENABLED` | `true` | `false` runs HTTP only (useful for local debugging) |
 | `DAPR_HOST` / `DAPR_HTTP_PORT` | `daprd-crm-sync` / `3500` | sidecar address |
@@ -71,9 +90,12 @@ segmentio/kafka-go. Listens on **:7010**, Dapr app-id `crm-sync` (sidecar
 3. Go to **Settings → API & Webhooks → API keys → Create key**; copy it.
 4. Export it for compose: `TWENTY_API_KEY=<key> docker compose up -d crm-sync`
    (compose default is a non-working dev placeholder).
-5. For reverse intake, create a **webhook** in the same settings page pointing
-   at `http://crm-sync:7010/webhooks/twenty` and set `TWENTY_WEBHOOK_SECRET`
-   to the same shared secret you configure the sender with.
+5. For the reverse direction, register the **webhook** idempotently with
+   `infra/twenty/setup-webhooks.sh` (operations `person.created`,
+   `person.updated`, `task.updated`, target
+   `http://crm-sync:7010/webhooks/twenty`) and set `TWENTY_WEBHOOK_SECRET`
+   to the same shared secret. Manual alternative: create the webhook in the
+   same settings page.
 
 ## sync_map
 
@@ -81,16 +103,20 @@ Bootstrapped idempotently on startup (schema per SPEC-CRM §B):
 
 ```
 sync_map(id serial, kind text, opendesk_id text, twenty_id text,
-         tenant_id uuid, updated_at timestamptz,
+         tenant_id uuid, updated_at timestamptz, last_synced_at timestamptz,
          UNIQUE(kind, opendesk_id, tenant_id))
+-- plus: index on (kind, twenty_id) for reverse lookups
 ```
 
 Kinds: `tenant` (tenant UUID → Twenty company id), `contact` (booking contact
 UUID → Twenty person id), `booking` (booking UUID → Twenty task id),
-`booking_contact` (booking UUID → Twenty person id; used by `/v1/tasks` to
+`booking_task` (booking UUID → Twenty task id; reverse lookup for
+`task.updated` DONE webhooks), `booking_contact` (booking UUID → Twenty
+person id; used by `/v1/tasks` to
 resolve "the person of booking X"). A nil
 tenant is stored as the zero UUID so the UNIQUE constraint dedupes correctly
-(Postgres treats NULLs as distinct).
+(Postgres treats NULLs as distinct). `last_synced_at` is stamped by every
+forward-sync `Put` and feeds the reverse worker's echo suppression.
 
 Inspect: `docker compose exec postgres psql -U opendesk -d crm_sync -c 'select * from sync_map order by updated_at desc limit 20;'`
 

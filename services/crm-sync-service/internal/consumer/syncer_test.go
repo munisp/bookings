@@ -45,11 +45,43 @@ func (f *fakeMap) Get(_ context.Context, kind, odID string, tid *uuid.UUID) (syn
 	return m, nil
 }
 
+// GetByTwentyID mirrors syncmap.Store.GetByTwentyID (reverse lookup, latest
+// updated_at wins).
+func (f *fakeMap) GetByTwentyID(_ context.Context, kind, twentyID string) (syncmap.Mapping, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var best syncmap.Mapping
+	found := false
+	for _, m := range f.rows {
+		if m.Kind == kind && m.TwentyID == twentyID && (!found || m.UpdatedAt.After(best.UpdatedAt)) {
+			best, found = m, true
+		}
+	}
+	if !found {
+		return syncmap.Mapping{}, syncmap.ErrNotFound
+	}
+	return best, nil
+}
+
 func (f *fakeMap) Put(_ context.Context, kind, odID, twentyID string, tid *uuid.UUID) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.rows[key(kind, odID, tid)] = syncmap.Mapping{Kind: kind, OpenDeskID: odID, TwentyID: twentyID}
+	now := time.Now()
+	f.rows[key(kind, odID, tid)] = syncmap.Mapping{
+		Kind: kind, OpenDeskID: odID, TwentyID: twentyID, TenantID: tid,
+		UpdatedAt: now, LastSyncedAt: &now, // mirrors syncmap.Put's last_synced_at stamp
+	}
 	return nil
+}
+
+// seed injects a mapping row with explicit timestamps (test fixture helper).
+func (f *fakeMap) seed(kind, odID, twentyID string, tid *uuid.UUID, updatedAt time.Time, lastSyncedAt *time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rows[key(kind, odID, tid)] = syncmap.Mapping{
+		Kind: kind, OpenDeskID: odID, TwentyID: twentyID, TenantID: tid,
+		UpdatedAt: updatedAt, LastSyncedAt: lastSyncedAt,
+	}
 }
 
 func (f *fakeMap) DeleteByTwentyID(_ context.Context, twentyID string) (int64, error) {
@@ -215,6 +247,57 @@ func TestHandleBookingCreatedSyncsPersonAndTask(t *testing.T) {
 	cm, _ := fm.Get(context.Background(), KindContact, contactID, &tid)
 	if bc.TwentyID != cm.TwentyID {
 		t.Errorf("booking_contact person %q != contact person %q", bc.TwentyID, cm.TwentyID)
+	}
+
+	// Reverse-sync contract: kind=booking_task maps the booking to the task
+	// (used to resolve task.updated DONE webhooks) ...
+	bt, err := fm.Get(context.Background(), KindBookingTask, bookingID, &tid)
+	if err != nil {
+		t.Fatalf("booking_task mapping missing: %v", err)
+	}
+	bm, _ := fm.Get(context.Background(), KindBooking, bookingID, &tid)
+	if bt.TwentyID != bm.TwentyID {
+		t.Errorf("booking_task task %q != booking task %q", bt.TwentyID, bm.TwentyID)
+	}
+	// ... and the contact mapping is stamped last_synced_at for echo
+	// suppression of the inbound webhook our person write triggers.
+	if cm.LastSyncedAt == nil || time.Since(*cm.LastSyncedAt) > time.Minute {
+		t.Errorf("contact mapping last_synced_at not stamped: %+v", cm)
+	}
+}
+
+// TestSyncPersonRefreshStampsLastSynced covers the forward update path: when
+// a contact mapping already exists, the person PATCH must refresh
+// last_synced_at (echo suppression input).
+func TestSyncPersonRefreshStampsLastSynced(t *testing.T) {
+	s, fm, _ := newTestSyncer(t)
+	tid := uuid.New()
+	contactID := uuid.NewString()
+	old := time.Now().Add(-time.Hour)
+	fm.seed(KindContact, contactID, "person-9", &tid, old, &old)
+
+	evt := bookingEvent(events.TypeBookingCreated, map[string]any{
+		"booking_id":   uuid.NewString(),
+		"starts_at":    "2026-03-01T10:00:00Z",
+		"ends_at":      "2026-03-01T10:30:00Z",
+		"status":       "pending",
+		"source":       "web",
+		"offering_id":  uuid.NewString(),
+		"contact_id":   contactID,
+		"contact_name": "Jane Doe",
+		"email":        "jane@example.com",
+	})
+	evt.TenantID = tid.String()
+
+	if err := s.HandleBooking(context.Background(), evt); err != nil {
+		t.Fatal(err)
+	}
+	m, err := fm.Get(context.Background(), KindContact, contactID, &tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.LastSyncedAt == nil || time.Since(*m.LastSyncedAt) > time.Minute {
+		t.Errorf("last_synced_at not refreshed on person update path: %+v", m)
 	}
 }
 

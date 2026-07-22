@@ -277,6 +277,23 @@ func (c *Client) patch(ctx context.Context, object, id string, body any) error {
 	return c.do(ctx, http.MethodPatch, "/rest/"+object+"/"+id, "", body, nil)
 }
 
+// getByID fetches a single record (GET /rest/{object}/{id}) and decodes it
+// into out (the record object inside the response envelope).
+func (c *Client) getByID(ctx context.Context, object, id string, out any) error {
+	var env envelope
+	if err := c.do(ctx, http.MethodGet, "/rest/"+object+"/"+id, "", nil, &env); err != nil {
+		return err
+	}
+	raw, err := env.firstRecord()
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("decode %s/%s record: %w", object, id, err)
+	}
+	return nil
+}
+
 // ---------------- People ----------------
 
 // FindPerson locates a person by email first, then phone (SPEC-CRM §B).
@@ -304,6 +321,16 @@ func (c *Client) CreatePerson(ctx context.Context, p PersonUpsert) (string, erro
 // UpdatePerson patches a Person record.
 func (c *Client) UpdatePerson(ctx context.Context, id string, p PersonUpsert) error {
 	return c.patch(ctx, "people", id, p)
+}
+
+// GetPerson fetches a full Person record by id (reverse sync: the webhook
+// payload carries the id; the record is re-fetched for the current state).
+func (c *Client) GetPerson(ctx context.Context, id string) (PersonRecord, error) {
+	var p PersonRecord
+	if err := c.getByID(ctx, "people", id, &p); err != nil {
+		return p, err
+	}
+	return p, nil
 }
 
 // DeletePerson removes a Person record (GDPR right-to-erasure, SPEC-W3 §2).
@@ -351,6 +378,16 @@ func (c *Client) UpsertCompany(ctx context.Context, name, slug string) (string, 
 	return rec.ID, nil
 }
 
+// GetCompany fetches a Company record by id (reverse sync: tenant resolution
+// via the company domainName "<slug>.opendesk.local").
+func (c *Client) GetCompany(ctx context.Context, id string) (CompanyRecord, error) {
+	var comp CompanyRecord
+	if err := c.getByID(ctx, "companies", id, &comp); err != nil {
+		return comp, err
+	}
+	return comp, nil
+}
+
 // ---------------- Tasks ----------------
 
 // CreateTask creates a Task and best-effort links it to a person via
@@ -376,6 +413,16 @@ func (c *Client) createTaskTarget(ctx context.Context, taskID, personID string) 
 // PatchTask patches arbitrary task fields (e.g. {"status":"DONE"}, {"dueAt":...}).
 func (c *Client) PatchTask(ctx context.Context, id string, fields map[string]any) error {
 	return c.patch(ctx, "tasks", id, fields)
+}
+
+// GetTask fetches a Task record by id (reverse sync: task.updated payloads
+// that omit the new status).
+func (c *Client) GetTask(ctx context.Context, id string) (TaskRecord, error) {
+	var t TaskRecord
+	if err := c.getByID(ctx, "tasks", id, &t); err != nil {
+		return t, err
+	}
+	return t, nil
 }
 
 // ---------------- Notes ----------------

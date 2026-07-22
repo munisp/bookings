@@ -28,6 +28,9 @@ type Config struct {
 	CRMEventsTopic      string // opendesk.crm.events (reverse webhook intake)
 	PrivacyTopic        string // opendesk.privacy.events (GDPR erase tombstones)
 	ConsumerGroup       string // crm-sync
+	ReverseGroup        string // crm-sync-reverse (Twenty -> OpenDesk worker)
+	BookingAppID        string // Dapr app-id of booking-service (default booking)
+	EchoWindow          time.Duration // reverse echo suppression window (default 10s)
 	DLQTopic            string // opendesk.dlq
 	ShutdownTimeout     time.Duration
 	ConsumerEnabled     bool // run Kafka consumers (default true)
@@ -50,7 +53,11 @@ func Load() (Config, error) {
 		BookingTopic:        envStr("BOOKING_EVENTS_TOPIC", "opendesk.booking.events"),
 		ConversationTopic:   envStr("CONVERSATION_EVENTS_TOPIC", "opendesk.conversation.events"),
 		CRMEventsTopic:      envStr("CRM_EVENTS_TOPIC", "opendesk.crm.events"),
+		PrivacyTopic:        envStr("PRIVACY_EVENTS_TOPIC", "opendesk.privacy.events"),
 		ConsumerGroup:       envStr("CONSUMER_GROUP", "crm-sync"),
+		ReverseGroup:        envStr("REVERSE_CONSUMER_GROUP", "crm-sync-reverse"),
+		BookingAppID:        envStr("BOOKING_APP_ID", "booking"),
+		EchoWindow:          time.Duration(envInt("REVERSE_ECHO_WINDOW_SECONDS", 10)) * time.Second,
 		DLQTopic:            envStr("DLQ_TOPIC", "opendesk.dlq"),
 		ShutdownTimeout:     time.Duration(envInt("SHUTDOWN_TIMEOUT_SECONDS", 20)) * time.Second,
 		ConsumerEnabled:     envStr("CONSUMER_ENABLED", "true") == "true",

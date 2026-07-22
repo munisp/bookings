@@ -1,6 +1,8 @@
-// crm-sync-service: OpenDesk -> Twenty CRM one-way sync (identity/booking/
-// conversation events), reverse webhook intake, and the /v1/tasks helper
-// used by Temporal activities (SPEC-CRM §B).
+// crm-sync-service: bidirectional OpenDesk <-> Twenty CRM sync. Forward:
+// identity/booking/conversation event consumers -> Twenty REST. Reverse:
+// HMAC-verified webhook intake -> opendesk.crm.events -> reverse worker ->
+// booking-service internal endpoints. Plus the /v1/tasks helper used by
+// Temporal activities (SPEC-CRM §B).
 package main
 
 import (
@@ -63,6 +65,19 @@ func run() error {
 
 	syncer := &consumer.Syncer{Twenty: twenty, Map: st, Metrics: reg, Log: logger}
 
+	// Reverse worker (Twenty -> OpenDesk): consumes the webhook CloudEvents
+	// from opendesk.crm.events in its own group so it scales/offsets
+	// independently of the forward consumers.
+	reverse := &consumer.ReverseSyncer{
+		Twenty:       twenty,
+		Map:          st,
+		Invoker:      daprClient,
+		BookingAppID: cfg.BookingAppID,
+		EchoWindow:   cfg.EchoWindow,
+		Metrics:      reg,
+		Log:          logger,
+	}
+
 	g, gctx := errgroup.WithContext(ctx)
 
 	// Event consumers (direct Kafka, shared group `crm-sync`, DLQ after 3 attempts).
@@ -73,6 +88,8 @@ func run() error {
 			consumer.New(cfg.KafkaBrokers, cfg.ConversationTopic, cfg.ConsumerGroup, cfg.DLQTopic, syncer.HandleConversation, reg, logger),
 			// GDPR erase tombstones (SPEC-W3 §2): deletes the Twenty person.
 			consumer.New(cfg.KafkaBrokers, cfg.PrivacyTopic, cfg.ConsumerGroup, cfg.DLQTopic, syncer.HandlePrivacy, reg, logger),
+			// Reverse direction: Twenty webhook events -> OpenDesk.
+			consumer.New(cfg.KafkaBrokers, cfg.CRMEventsTopic, cfg.ReverseGroup, cfg.DLQTopic, reverse.HandleCRMEvent, reg, logger),
 		}
 		for _, c := range consumers {
 			c := c

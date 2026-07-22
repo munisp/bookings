@@ -10,9 +10,9 @@ import (
 )
 
 // TenantDomain is the synthetic domainName for a tenant's Twenty Company:
-// slug + ".opendesk.local" (SPEC-CRM §B).
+// slug + "." + tenantDomainSuffix (SPEC-CRM §B).
 func TenantDomain(slug string) string {
-	return slug + ".opendesk.local"
+	return slug + "." + tenantDomainSuffix
 }
 
 // CompanyUpsert is the body for creating/updating a Twenty Company from a
@@ -125,3 +125,74 @@ const AIBookingNote = "Booked via AI receptionist"
 
 // FormatTime renders a timestamp in Twenty's accepted RFC3339 form (UTC).
 func FormatTime(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+// ---------------- reverse-sync record shapes (Twenty -> OpenDesk) ----------------
+
+// PersonRecord is the slice of a Twenty Person we read back on reverse sync.
+type PersonRecord struct {
+	ID        string   `json:"id"`
+	Name      FullName `json:"name"`
+	Emails    *Emails  `json:"emails"`
+	Phones    *Phones  `json:"phones"`
+	CompanyID string   `json:"companyId"`
+}
+
+// DisplayName renders "First Last", falling back to "Unknown" (mirrors
+// SplitName's fallback so the booking contact always has a name).
+func (p PersonRecord) DisplayName() string {
+	n := strings.TrimSpace(strings.TrimSpace(p.Name.FirstName) + " " + strings.TrimSpace(p.Name.LastName))
+	if n == "" {
+		return "Unknown"
+	}
+	return n
+}
+
+// PrimaryEmail returns the person's primary e-mail ("" when unset).
+func (p PersonRecord) PrimaryEmail() string {
+	if p.Emails == nil {
+		return ""
+	}
+	return p.Emails.PrimaryEmail
+}
+
+// PrimaryPhone returns the person's primary phone number ("" when unset).
+func (p PersonRecord) PrimaryPhone() string {
+	if p.Phones == nil {
+		return ""
+	}
+	return p.Phones.PrimaryPhoneNumber
+}
+
+// CompanyRecord is the slice of a Twenty Company used for tenant resolution.
+type CompanyRecord struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	DomainName Links  `json:"domainName"`
+}
+
+// TaskRecord is the slice of a Twenty Task used by the reverse sync.
+type TaskRecord struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+}
+
+// SlugFromTenantDomain extracts the tenant slug from a Twenty Company's
+// domainName URL — the forward syncer writes companies with
+// domainName "https://<slug>.opendesk.local" (TenantDomain). Returns
+// ("", false) when the URL is not an OpenDesk tenant domain.
+func SlugFromTenantDomain(primaryLinkURL string) (string, bool) {
+	host := strings.TrimSpace(primaryLinkURL)
+	host = strings.TrimPrefix(host, "https://")
+	host = strings.TrimPrefix(host, "http://")
+	host, _, _ = strings.Cut(host, "/") // strip any path
+	host = strings.TrimSuffix(host, "/")
+	slug, ok := strings.CutSuffix(host, "."+tenantDomainSuffix)
+	if !ok || slug == "" {
+		return "", false
+	}
+	return slug, true
+}
+
+// tenantDomainSuffix is the synthetic parent domain for tenant companies.
+const tenantDomainSuffix = "opendesk.local"
