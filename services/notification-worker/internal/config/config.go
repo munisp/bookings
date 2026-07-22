@@ -34,6 +34,13 @@ type Config struct {
 	KafkaBrokers       string // comma-separated broker list for the booking-events signal bridge
 	BookingEventsTopic string // topic consumed by the signal bridge
 	SignalGroup        string // consumer group of the signal bridge
+	// Outbound webhook platform (Wave 5 #10) + notifications outbox (#7)
+	DatabaseURL              string // notifications DB DSN (empty = webhook platform disabled)
+	ConversationEventsTopic  string // opendesk.conversation.events (webhook dispatcher source)
+	WebhookGroup             string // consumer group of the webhook dispatcher
+	NotificationsOutboxTopic string // opendesk.notifications.outbox (SendPortalCode etc.)
+	NotificationsOutboxGroup string // consumer group of the outbox consumer
+	WebhookSigningRequired   bool   // require a signing secret on subscription create
 	// GDPR (SPEC-W3 §2 innovation 13)
 	ConversationAppID  string // Dapr app-id of conversation-service (export collector)
 	PrivacyEventsTopic string // opendesk.privacy.events (erase tombstones)
@@ -54,42 +61,48 @@ type Config struct {
 // Load reads configuration from the environment.
 func Load() Config {
 	return Config{
-		Port:                envInt("PORT", 7003),
-		TemporalHostPort:    envStr("TEMPORAL_HOST_PORT", "temporal:7233"),
-		TemporalNamespace:   envStr("TEMPORAL_NAMESPACE", "opendesk"),
-		TemporalTaskQueue:   envStr("TEMPORAL_TASK_QUEUE", "opendesk-main"),
-		DaprHost:            envStr("DAPR_HOST", "daprd-notification"),
-		DaprHTTPPort:        envInt("DAPR_HTTP_PORT", 3500),
-		BookingAppID:        envStr("BOOKING_APP_ID", "booking"),
-		PaymentsAppID:       envStr("PAYMENTS_APP_ID", "payments"),
-		IdentityAppID:       envStr("IDENTITY_APP_ID", "identity"),
-		KnowledgeAppID:      envStr("KNOWLEDGE_APP_ID", "knowledge"),
-		CRMSyncAppID:        envStr("CRM_SYNC_APP_ID", "crm-sync"),
-		PubSubName:          envStr("DAPR_PUBSUB_NAME", "pubsub-kafka"),
-		CRMEventsTopic:      envStr("CRM_EVENTS_TOPIC", "opendesk.crm.events"),
-		IndustriesDir:       envStr("INDUSTRIES_DIR", "/industries"),
-		SMTPBinding:         envStr("SMTP_BINDING", "bindings-smtp"),
-		TwilioBinding:       envStr("TWILIO_BINDING", "bindings-twilio"),
-		SMTPFrom:            envStr("SMTP_FROM", "no-reply@opendesk.local"),
-		TwilioFrom:          envStr("TWILIO_FROM", "+10000000000"),
-		OpenSearchURL:       envStr("OPENSEARCH_URL", "http://opensearch:9200"),
-		PublicBaseURL:       envStr("PUBLIC_BASE_URL", "http://localhost:9080"),
-		KafkaBrokers:        envStr("KAFKA_BROKERS", "kafka:9092"),
-		BookingEventsTopic:  envStr("BOOKING_EVENTS_TOPIC", "opendesk.booking.events"),
-		SignalGroup:         envStr("SIGNAL_GROUP", "notification-signals"),
-		ConversationAppID:   envStr("CONVERSATION_APP_ID", "conversation"),
-		PrivacyEventsTopic:  envStr("PRIVACY_EVENTS_TOPIC", "opendesk.privacy.events"),
-		S3Endpoint:          envStr("S3_ENDPOINT", "http://minio:9000"),
-		S3Region:            envStr("S3_REGION", "us-east-1"),
-		S3AccessKey:         envStr("S3_ACCESS_KEY", "minioadmin"),
-		S3SecretKey:         envStr("S3_SECRET_KEY", "minioadmin"),
-		S3ExportsBucket:     envStr("S3_EXPORTS_BUCKET", "exports"),
-		OutboundCPS:         envFloat("OUTBOUND_CPS", 1.0),
-		OutboundBurst:       envInt("OUTBOUND_BURST", 3),
-		PacerBackend:        envStr("PACER_BACKEND", "redis"),
-		OutboundFromNumbers: envList("OUTBOUND_FROM_NUMBERS"),
-		RedisAddr:           envStr("REDIS_ADDR", "redis:6379"),
-		ShutdownTimeout:     time.Duration(envInt("SHUTDOWN_TIMEOUT_SECONDS", 20)) * time.Second,
+		Port:                     envInt("PORT", 7003),
+		TemporalHostPort:         envStr("TEMPORAL_HOST_PORT", "temporal:7233"),
+		TemporalNamespace:        envStr("TEMPORAL_NAMESPACE", "opendesk"),
+		TemporalTaskQueue:        envStr("TEMPORAL_TASK_QUEUE", "opendesk-main"),
+		DaprHost:                 envStr("DAPR_HOST", "daprd-notification"),
+		DaprHTTPPort:             envInt("DAPR_HTTP_PORT", 3500),
+		BookingAppID:             envStr("BOOKING_APP_ID", "booking"),
+		PaymentsAppID:            envStr("PAYMENTS_APP_ID", "payments"),
+		IdentityAppID:            envStr("IDENTITY_APP_ID", "identity"),
+		KnowledgeAppID:           envStr("KNOWLEDGE_APP_ID", "knowledge"),
+		CRMSyncAppID:             envStr("CRM_SYNC_APP_ID", "crm-sync"),
+		PubSubName:               envStr("DAPR_PUBSUB_NAME", "pubsub-kafka"),
+		CRMEventsTopic:           envStr("CRM_EVENTS_TOPIC", "opendesk.crm.events"),
+		IndustriesDir:            envStr("INDUSTRIES_DIR", "/industries"),
+		SMTPBinding:              envStr("SMTP_BINDING", "bindings-smtp"),
+		TwilioBinding:            envStr("TWILIO_BINDING", "bindings-twilio"),
+		SMTPFrom:                 envStr("SMTP_FROM", "no-reply@opendesk.local"),
+		TwilioFrom:               envStr("TWILIO_FROM", "+10000000000"),
+		OpenSearchURL:            envStr("OPENSEARCH_URL", "http://opensearch:9200"),
+		PublicBaseURL:            envStr("PUBLIC_BASE_URL", "http://localhost:9080"),
+		KafkaBrokers:             envStr("KAFKA_BROKERS", "kafka:9092"),
+		BookingEventsTopic:       envStr("BOOKING_EVENTS_TOPIC", "opendesk.booking.events"),
+		SignalGroup:              envStr("SIGNAL_GROUP", "notification-signals"),
+		DatabaseURL:              os.Getenv("DATABASE_URL"),
+		ConversationEventsTopic:  envStr("CONVERSATION_EVENTS_TOPIC", "opendesk.conversation.events"),
+		WebhookGroup:             envStr("WEBHOOK_GROUP", "notification-webhooks"),
+		NotificationsOutboxTopic: envStr("NOTIFICATIONS_OUTBOX_TOPIC", "opendesk.notifications.outbox"),
+		NotificationsOutboxGroup: envStr("NOTIFICATIONS_OUTBOX_GROUP", "notification-outbox"),
+		WebhookSigningRequired:   envStr("WEBHOOK_SIGNING_REQUIRED", "false") == "true",
+		ConversationAppID:        envStr("CONVERSATION_APP_ID", "conversation"),
+		PrivacyEventsTopic:       envStr("PRIVACY_EVENTS_TOPIC", "opendesk.privacy.events"),
+		S3Endpoint:               envStr("S3_ENDPOINT", "http://minio:9000"),
+		S3Region:                 envStr("S3_REGION", "us-east-1"),
+		S3AccessKey:              envStr("S3_ACCESS_KEY", "minioadmin"),
+		S3SecretKey:              envStr("S3_SECRET_KEY", "minioadmin"),
+		S3ExportsBucket:          envStr("S3_EXPORTS_BUCKET", "exports"),
+		OutboundCPS:              envFloat("OUTBOUND_CPS", 1.0),
+		OutboundBurst:            envInt("OUTBOUND_BURST", 3),
+		PacerBackend:             envStr("PACER_BACKEND", "redis"),
+		OutboundFromNumbers:      envList("OUTBOUND_FROM_NUMBERS"),
+		RedisAddr:                envStr("REDIS_ADDR", "redis:6379"),
+		ShutdownTimeout:          time.Duration(envInt("SHUTDOWN_TIMEOUT_SECONDS", 20)) * time.Second,
 	}
 }
 

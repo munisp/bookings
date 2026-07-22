@@ -1,0 +1,93 @@
+package workflows
+
+import (
+	"time"
+
+	"go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/workflow"
+)
+
+// Webhook delivery (Wave 5 #10): one WebhookDeliveryWorkflow per
+// subscription×event. The workflow owns the retry schedule with durable
+// timers, so a worker restart never loses a pending retry.
+
+// Activity names (registered in cmd/worker/main.go).
+const (
+	ActivityDeliverWebhookHTTP    = "DeliverWebhookHTTP"
+	ActivityUpdateWebhookDelivery = "UpdateWebhookDelivery"
+)
+
+// WebhookBackoff is the retry schedule AFTER the initial attempt:
+// 1m, 5m, 15m, 1h, 4h — then the delivery is marked dlq.
+var WebhookBackoff = []time.Duration{
+	time.Minute,
+	5 * time.Minute,
+	15 * time.Minute,
+	time.Hour,
+	4 * time.Hour,
+}
+
+// WebhookDeliveryInput starts a WebhookDeliveryWorkflow.
+type WebhookDeliveryInput struct {
+	DeliveryID string `json:"delivery_id"`
+	URL        string `json:"url"`
+	Secret     string `json:"secret"`
+	EventType  string `json:"event_type"`
+	// Body is the raw CloudEvents envelope, POSTed verbatim.
+	Body []byte `json:"body"`
+}
+
+// WebhookDeliveryUpdate is the persistence update after each attempt.
+type WebhookDeliveryUpdate struct {
+	DeliveryID  string     `json:"delivery_id"`
+	Status      string     `json:"status"` // retrying | delivered | dlq
+	Attempts    int        `json:"attempts"`
+	StatusCode  int        `json:"status_code"` // 0 = transport error
+	NextRetryAt *time.Time `json:"next_retry_at,omitempty"`
+}
+
+// WebhookDeliveryWorkflow delivers one webhook with up to
+// 1+len(WebhookBackoff) attempts. Terminal states (delivered, dlq) are
+// persisted before completion; the workflow itself never fails on receiver
+// errors — dlq IS the failure signal.
+func WebhookDeliveryWorkflow(ctx workflow.Context, in WebhookDeliveryInput) error {
+	ao := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: 30 * time.Second,
+		// The workflow owns the retry schedule; Temporal must not retry the
+		// HTTP attempt itself (it would bypass the backoff + bookkeeping).
+		RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1},
+	})
+	maxAttempts := len(WebhookBackoff) + 1
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		var statusCode int
+		err := workflow.ExecuteActivity(ao, ActivityDeliverWebhookHTTP, in).Get(ctx, &statusCode)
+		if err != nil {
+			statusCode = 0 // transport-level failure (DNS, connect, timeout)
+		}
+		upd := WebhookDeliveryUpdate{DeliveryID: in.DeliveryID, Attempts: attempt, StatusCode: statusCode}
+		switch {
+		case err == nil && statusCode >= 200 && statusCode < 300:
+			upd.Status = "delivered"
+			// A bookkeeping failure must not redeliver — swallow with a log.
+			_ = workflow.ExecuteActivity(ao, ActivityUpdateWebhookDelivery, upd).Get(ctx, nil)
+			return nil
+		case attempt == maxAttempts:
+			upd.Status = "dlq"
+			_ = workflow.ExecuteActivity(ao, ActivityUpdateWebhookDelivery, upd).Get(ctx, nil)
+			return nil
+		default:
+			upd.Status = "retrying"
+			next := workflow.Now(ao).Add(WebhookBackoff[attempt-1])
+			upd.NextRetryAt = &next
+			if uerr := workflow.ExecuteActivity(ao, ActivityUpdateWebhookDelivery, upd).Get(ctx, nil); uerr != nil {
+				// Persistence is broken; retrying blindly would hammer the
+				// receiver — fail the run so it surfaces in Temporal.
+				return uerr
+			}
+			if serr := workflow.Sleep(ao, WebhookBackoff[attempt-1]); serr != nil {
+				return serr
+			}
+		}
+	}
+	return nil
+}

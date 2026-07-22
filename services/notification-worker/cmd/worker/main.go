@@ -15,13 +15,17 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/google/uuid"
 	"github.com/opendesk/notification-worker/internal/activities"
 	"github.com/opendesk/notification-worker/internal/config"
 	"github.com/opendesk/notification-worker/internal/daprc"
 	"github.com/opendesk/notification-worker/internal/httpapi"
+	"github.com/opendesk/notification-worker/internal/notifyoutbox"
 	"github.com/opendesk/notification-worker/internal/pacer"
 	"github.com/opendesk/notification-worker/internal/packs"
 	"github.com/opendesk/notification-worker/internal/signals"
+	"github.com/opendesk/notification-worker/internal/store"
+	"github.com/opendesk/notification-worker/internal/webhooks"
 	"github.com/opendesk/notification-worker/internal/workflows"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
@@ -141,6 +145,11 @@ func run() error {
 	// Digital-twin cleanup activity (SPEC-W3 §3 innovation 12)
 	w.RegisterActivityWithOptions(acts.DeleteTwinTenant, activity.RegisterOptions{Name: workflows.ActivityDeleteTwinTenant})
 
+	// Outbound webhook delivery (Wave 5 #10)
+	w.RegisterWorkflowWithOptions(workflows.WebhookDeliveryWorkflow, workflow.RegisterOptions{Name: "WebhookDeliveryWorkflow"})
+	w.RegisterActivityWithOptions(acts.DeliverWebhookHTTP, activity.RegisterOptions{Name: workflows.ActivityDeliverWebhookHTTP})
+	w.RegisterActivityWithOptions(acts.UpdateWebhookDelivery, activity.RegisterOptions{Name: workflows.ActivityUpdateWebhookDelivery})
+
 	// Industry pack activities (SPEC-CRM §C2)
 	w.RegisterActivityWithOptions(acts.ApplyIndustryPack, activity.RegisterOptions{Name: workflows.ActivityApplyIndustryPack})
 	w.RegisterActivityWithOptions(acts.VerifyDepositHold, activity.RegisterOptions{Name: workflows.ActivityVerifyDepositHold})
@@ -153,10 +162,48 @@ func run() error {
 	w.RegisterActivityWithOptions(acts.SendProposalReminder, activity.RegisterOptions{Name: workflows.ActivitySendProposalReminder})
 	w.RegisterActivityWithOptions(acts.EscalateTicket, activity.RegisterOptions{Name: workflows.ActivityEscalateTicket})
 
-	// HTTP sidecar: /healthz + /dev triggers
+	// Outbound webhook platform (Wave 5 #10): Postgres-backed subscriptions +
+	// deliveries. Without DATABASE_URL the platform degrades to 503s on
+	// /v1/webhooks and no dispatcher — the rest of the worker is unaffected.
+	var webhookStore *store.Store
+	if cfg.DatabaseURL != "" {
+		st, err := store.New(context.Background(), cfg.DatabaseURL)
+		if err != nil {
+			return fmt.Errorf("webhook store: %w", err)
+		}
+		webhookStore = st
+		defer webhookStore.Close()
+		acts.Webhooks = activities.WebhookDeps{Store: webhookStore}
+		logger.Info("webhook platform enabled",
+			zap.Bool("signing_required", cfg.WebhookSigningRequired))
+	} else {
+		logger.Warn("DATABASE_URL unset: webhook platform disabled (subscriptions/deliveries 503)")
+	}
+
+	// HTTP sidecar: /healthz + /dev triggers + /v1/webhooks (Wave 5 #10)
 	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Port),
-		Handler: httpapi.NewRouter(&httpapi.Server{Temporal: tc, TaskQueue: cfg.TemporalTaskQueue, Log: logger}),
+		Addr: fmt.Sprintf(":%d", cfg.Port),
+		Handler: httpapi.NewRouter(&httpapi.Server{
+			Temporal:  tc,
+			TaskQueue: cfg.TemporalTaskQueue,
+			Log:       logger,
+			Webhooks:  webhookStore,
+			ResolveTenant: func(ctx context.Context, slug string) (httpapi.TenantRef, error) {
+				var out struct {
+					ID   string `json:"id"`
+					Slug string `json:"slug"`
+				}
+				if err := daprClient.InvokeService(ctx, cfg.IdentityAppID, "v1/tenants/"+slug, nil, &out); err != nil {
+					return httpapi.TenantRef{}, err
+				}
+				id, err := uuid.Parse(out.ID)
+				if err != nil {
+					return httpapi.TenantRef{}, fmt.Errorf("identity returned bad tenant id: %w", err)
+				}
+				return httpapi.TenantRef{ID: id, Slug: slug}, nil
+			},
+			WebhookSigningRequired: cfg.WebhookSigningRequired,
+		}),
 	}
 	errCh := make(chan error, 1)
 	go func() {
@@ -179,6 +226,38 @@ func run() error {
 			errCh <- fmt.Errorf("signal bridge: %w", err)
 		}
 	}()
+
+	// Notifications outbox consumer (Wave 5 #7): delivers SendPortalCode and
+	// future fire-and-forget notification commands via the smtp/twilio
+	// bindings (booking-service publishes; this worker owns the bindings).
+	outboxConsumer := notifyoutbox.New(
+		strings.Split(cfg.KafkaBrokers, ","),
+		cfg.NotificationsOutboxTopic, cfg.NotificationsOutboxGroup,
+		notifyoutbox.BindingSender{
+			Dapr: daprClient, SMTPBinding: cfg.SMTPBinding, TwilioBinding: cfg.TwilioBinding,
+			SMTPFrom: cfg.SMTPFrom, TwilioFrom: cfg.TwilioFrom,
+		}, logger)
+	defer outboxConsumer.Close() //nolint:errcheck
+	go func() {
+		if err := outboxConsumer.Run(ctx); err != nil {
+			errCh <- fmt.Errorf("notifications outbox consumer: %w", err)
+		}
+	}()
+
+	// Outbound webhook dispatcher (Wave 5 #10): booking + conversation
+	// events → matching subscriptions → WebhookDeliveryWorkflow per delivery.
+	if webhookStore != nil {
+		dispatcher := webhooks.New(
+			strings.Split(cfg.KafkaBrokers, ","),
+			[]string{cfg.BookingEventsTopic, cfg.ConversationEventsTopic},
+			cfg.WebhookGroup, webhookStore, tc, cfg.TemporalTaskQueue, logger)
+		defer dispatcher.Close() //nolint:errcheck
+		go func() {
+			if err := dispatcher.Run(ctx); err != nil {
+				errCh <- fmt.Errorf("webhook dispatcher: %w", err)
+			}
+		}()
+	}
 
 	go func() {
 		logger.Info("temporal worker starting",
