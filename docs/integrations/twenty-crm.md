@@ -87,6 +87,7 @@ All Twenty calls use `Authorization: Bearer <key>` against
 | `opendesk.booking.events` | `BookingCancelled` | PATCH the Task — status done + cancellation note | `kind=booking` (updated) |
 | `opendesk.booking.events` | `BookingRescheduled` | PATCH the Task `dueDate` | `kind=booking` (updated) |
 | `opendesk.conversation.events` | `ToolInvoked(book_appointment)` | Optional **Note** on the person: “Booked via AI receptionist” | — |
+| `opendesk.conversation.events` | `SessionEnded` (with `quality`) | Optional **Note** on the person: “📞 AI call summary — …” (see *Call quality signals*) | reads `kind=contact_phone` (written at booking sync) |
 
 Every forward-sync `sync_map` write also stamps `last_synced_at` — the input
 for reverse echo suppression (below). `kind=booking_task` (booking id → task
@@ -97,6 +98,89 @@ Upserts are keyed by `sync_map`
 `UNIQUE(kind, opendesk_id, tenant_id)`, so re-delivered events are idempotent.
 Events for unknown tenants/companies are retried (transient ordering) and
 dead-lettered after 3 attempts — see Troubleshooting.
+
+## Call quality signals
+
+When an AI voice session ends, voice-agent-runtime enriches the
+`com.opendesk.conversation.SessionEnded` CloudEvent with a `quality` object
+built from a per-session accumulator (`app/metrics.py` `SessionMetrics`,
+fed by the same call sites as the Prometheus registry: STT/TTS stages, the
+LLM tool loop + fallback chain, and the tool layer). crm-sync turns it into
+a **Note** on the caller's Twenty person.
+
+### Event shape
+
+```jsonc
+{
+  "type": "com.opendesk.conversation.SessionEnded",
+  "source": "voice-agent-runtime",
+  "tenantid": "<tenant-uuid>",
+  "subject": "<tenant-slug>",
+  "data": {
+    "conversationId": "…",
+    "channel": "voice",
+    "siteSlug": "acme-salon",
+    "quality": {                     // ABSENT when the session recorded no signals
+      "duration_s": 95.2,
+      "turn_count": 6,
+      "tool_calls": {"book_appointment": 1, "lookup_appointment": 2},
+      "avg_llm_latency_ms": 820,     // null when no LLM call was timed
+      "max_llm_latency_ms": 1400,    // null when no LLM call was timed
+      "stt_calls": 6,
+      "tts_calls": 5,
+      "llm_fallback_used": false,
+      "escalated": true,
+      "confirmed_phone": "+1555000111"  // null when the caller never confirmed a number
+    }
+  }
+}
+```
+
+### Resulting Twenty note
+
+Title `📞 AI call summary`, body (optional segments omitted when the payload
+lacks them):
+
+```
+📞 AI call summary — duration 95s, 6 turns, tools: book_appointment×1,
+lookup_appointment×2, avg LLM 820ms (max 1400ms), stt 6 calls, tts 5 calls,
+escalated: yes, fallback used: no
+```
+
+The note is created via `POST /rest/notes` and linked to the person via
+`POST /rest/noteTargets` — the same pattern as the AI-booking note.
+
+### Person resolution & skip rules
+
+1. `FindPerson` by `confirmed_phone` (Twenty `phones.primaryPhoneNumber[eq]`).
+2. Fallback: `sync_map kind=contact_phone` (phone → person id), written at
+   booking sync whenever a booking carries a phone — covers phone-format
+   mismatches between the confirmed number and the Twenty record.
+3. **Skip + ack** (logged, no retry, no DLQ) when: the event has no
+   `quality` object (session recorded no signals); `confirmed_phone` is null
+   (caller never confirmed — no person can be resolved and an orphaned note
+   would pollute the CRM); or the phone resolves to no person (contact never
+   synced — the note is best-effort).
+
+### Limitations
+
+* **Sentiment is not included.** The voice runtime has no per-turn
+  sentiment; that signal is computed by conversation-service (`app/intel.py`)
+  and lives in the **OpenSearch `conversations` index** (per-turn
+  sentiment/intent/entities columns), not in the SessionEnded event. The
+  consumer accepts an optional `avg_sentiment` field for future enrichment
+  and omits the segment when it is absent (voice-agent-runtime never sends
+  it today).
+* **LLM latency is null on the pure voice path.** The LiveKit worker's LLM
+  node (livekit-plugins-openai) is not timed by the in-process metrics, so
+  `avg_llm_latency_ms`/`max_llm_latency_ms` are `null` for voice sessions
+  today; the accumulator fields are populated by sessions whose LLM calls go
+  through the instrumented tool loop / fallback chain. `llm_fallback_used`
+  likewise reflects the circuit-broken fallback chain, not the worker's
+  job-level retry.
+* `turn_count` counts committed user utterances
+  (`user_speech_committed`); if the LiveKit event surface changes, turns
+  degrade to 0 rather than breaking session teardown.
 
 ## Reverse sync (Twenty → OpenDesk)
 
