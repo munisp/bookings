@@ -19,6 +19,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from . import metrics
 from .config import Settings
 from .dapr_client import DaprClient
 from .escalation import LiveKitEscalation, escalation_room_name
@@ -188,12 +189,19 @@ class ToolLayer:
         self._escalation = escalation or LiveKitEscalation(settings)
         self._plugin_tools = {t.name: t for t in (plugin_tools or [])}
 
+    @property
+    def tenant_context(self) -> TenantContext:
+        return self._ctx
+
     def schemas(self) -> list[dict[str, Any]]:
         """Built-in tool schemas plus any pack plugin tool schemas."""
         return TOOL_SCHEMAS + [t.schema() for t in self._plugin_tools.values()]
 
     # ------------------------------------------------------------------ util
     async def _emit_tool_event(self, tool: str, status: str, detail: dict[str, Any]) -> None:
+        # Per-session quality accumulator (every tool invocation lands here,
+        # on every path: LiveKit worker, chat tool loop, ElevenLabs webhook).
+        metrics.session_tool_call(tool)
         event = new_cloudevent(
             type_="com.opendesk.conversation.ToolInvoked",
             subject=self._ctx.tenant_slug,
