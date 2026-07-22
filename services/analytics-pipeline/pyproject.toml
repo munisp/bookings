@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "analytics-pipeline"
+version = "0.1.0"
+description = "OpenDesk Kafka -> Iceberg bronze sink with health/metrics sidecar (SPEC §13)."
+requires-python = ">=3.12"
+dependencies = [
+    "pyiceberg[pyarrow,sql-sqlite]==0.7.1",
+    "pyarrow==18.1.0",
+    "aiokafka==0.10.0",
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.32.1",
+    "structlog==24.4.0",
+    "prometheus-client==0.21.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["analytics_pipeline"]
