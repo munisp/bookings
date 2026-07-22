@@ -1,0 +1,46 @@
+# Fully-featured valid pack: optional agents + customTools blocks present.
+id: fixture-full
+displayName: Fixture Full Pack
+terminology:
+  offering: service
+  team_member: pro
+  booking: appointment
+  contact: client
+agentPersona: |
+  You are the fixture receptionist.
+bookingPolicy:
+  depositPercent: 25
+  noShowFeeCents: 1500
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 12
+temporalWorkflow: ClinicIntakeWorkflow
+offerings:
+- name: Consult
+  duration_min: 30
+  buffer_min: 5
+  price_cents: 5000
+  capacity: 1
+reminders:
+  offsets: ["24h"]
+  channels: ["email"]
+knowledgeSeed:
+- title: Hours
+  body: |
+    Open weekdays 9-17.
+dashboardLabels:
+  bookingSingular: Appointment
+  bookingPlural: Appointments
+  customerTerm: Client
+agents:
+- id: triage
+  name: Triage
+  persona: |
+    You triage requests.
+  intents: [triage, help]
+customTools:
+- name: lookup_order
+  description: Look up an order by id.
+  method: GET
+  url: "https://api.example.com/orders/{{id}}"
+  bodyTemplate: "{\"id\": \"{{id}}\"}"

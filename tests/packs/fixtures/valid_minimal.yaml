@@ -1,0 +1,8 @@
+# Minimal valid pack: no bookingPolicy, offerings, knowledgeSeed, agents,
+# customTools (Go zero-value semantics — optional blocks may be absent).
+id: fixture-min
+displayName: Fixture Minimal
+terminology: {offering: service, team_member: pro, booking: appointment, contact: client}
+agentPersona: "You are minimal."
+temporalWorkflow: SupportEscalationWorkflow
+dashboardLabels: {bookingSingular: Booking, bookingPlural: Bookings, customerTerm: Customer}

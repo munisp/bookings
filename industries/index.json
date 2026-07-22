@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "packs": [
+    {
+      "id": "clinic",
+      "version": "1.0.0",
+      "sha256": "e531855da9a54b264be231d9c55f038a533c227ed9104c32c33ddc7ad480851a",
+      "author": "opendesk",
+      "signature": null,
+      "path": "clinic.yaml"
+    },
+    {
+      "id": "consultancy",
+      "version": "1.0.0",
+      "sha256": "72692e34693524d3474f058d769722111ef290f276caf56b15e069e95815e3bb",
+      "author": "opendesk",
+      "signature": null,
+      "path": "consultancy.yaml"
+    },
+    {
+      "id": "salon",
+      "version": "1.0.0",
+      "sha256": "4e2e92f5be1bc624ce7d260b8d279976fa5c96cc3d8974ceb0d01126db604fbd",
+      "author": "opendesk",
+      "signature": null,
+      "path": "salon.yaml"
+    },
+    {
+      "id": "support-desk",
+      "version": "1.0.0",
+      "sha256": "e9b170331d46631c0c9fc4afe73c407a9b7a945af77feffb0443847dc678ba1a",
+      "author": "opendesk",
+      "signature": null,
+      "path": "support-desk.yaml"
+    }
+  ]
+}

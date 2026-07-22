@@ -1,0 +1,6 @@
+id: fixture-bad-wf
+displayName: Bad Workflow
+terminology: {offering: service, team_member: pro, booking: appointment, contact: client}
+agentPersona: "You are broken."
+temporalWorkflow: NotAWorkflow
+dashboardLabels: {bookingSingular: Booking, bookingPlural: Bookings, customerTerm: Customer}

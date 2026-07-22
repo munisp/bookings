@@ -1,0 +1,18 @@
+# Multiple schema violations: missing displayName/terminology key/persona,
+# bad deposit range, bad offering, duplicate agent id, bad tool method/URL.
+id: fixture-bad-schema
+terminology: {offering: service, team_member: pro, booking: appointment}
+agentPersona: "  "
+bookingPolicy: {depositPercent: 150, noShowFeeCents: -5, phoneConfirmation: "yes"}
+temporalWorkflow: SalonDepositWorkflow
+offerings:
+- {name: "", duration_min: 0, price_cents: -1}
+knowledgeSeed:
+- {title: "", body: ""}
+dashboardLabels: {bookingSingular: Booking}
+agents:
+- {id: "BAD ID!", name: "", persona: "", intents: []}
+- {id: dup, name: A, persona: p, intents: [x]}
+- {id: dup, name: B, persona: p, intents: [y]}
+customTools:
+- {name: "bad name", description: "", method: HACK, url: "ftp://x"}
