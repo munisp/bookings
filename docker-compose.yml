@@ -110,6 +110,10 @@ services:
       PG_USER: ${BOOKING_PG_USER:-opendesk}
       PG_PASS: ${BOOKING_PG_PASS:-opendesk}
       DATABASE_URL: postgres://${BOOKING_PG_USER:-opendesk}:${BOOKING_PG_PASS:-opendesk}@postgres:5432/booking
+      # Wave 5 #7 customer portal: HMAC secret for 15-min portal JWTs.
+      # Dev default keeps the stack bootable; prod MUST override via .env.
+      PORTAL_SECRET: ${PORTAL_SECRET:-opendesk-dev-portal-secret-change-in-prod}
+      NOTIFICATIONS_TOPIC: opendesk.notifications.outbox
     ports:
     - 7002:7002
     networks:

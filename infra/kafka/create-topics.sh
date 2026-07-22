@@ -14,12 +14,14 @@ TOPICS=(
   opendesk.transcripts-raw        # raw telephony/edge transcripts (Fluvio mirror source)
   opendesk.conversation.events     # SessionStarted/Ended, ToolInvoked, EscalationRequested
   opendesk.conversation.enriched   # per-turn call-intelligence enrichment (sentiment/intent/entities)
+  opendesk.conversation.quality    # CallQualityEnriched: SessionEnded quality + avg sentiment (Wave 5 #2)
   opendesk.payments.commands       # ChargeDeposit, Refund, NoShowFee
   opendesk.payments.events         # PaymentPosted(ledgerRef)
   opendesk.identity.events         # TenantProvisioned, MemberInvited, RoleChanged
   opendesk.crm.events              # CRM webhook intake + priority flags (SPEC-CRM §B)
   opendesk.notifications.outbox    # SendReminder, SendConfirmation
   opendesk.privacy.events          # PrivacyEraseRequested tombstones (GDPR, SPEC-W3 §2)
+  opendesk.usage.events            # UsageRecord metering events (Wave 5 #9: bookings, call-minutes, tokens)
   opendesk.dlq                     # dead letters
 )
 
