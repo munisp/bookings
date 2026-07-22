@@ -65,14 +65,18 @@ class OpenAICompatibleLLM:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> Any:
-        with metrics.get_registry().llm_latency.time():
-            resp = await self._client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                tools=tools or None,
-                tool_choice="auto" if tools else None,
-                temperature=0.3,
-            )
+        timer = metrics.get_registry().llm_latency.time()
+        try:
+            with timer:
+                resp = await self._client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    tools=tools or None,
+                    tool_choice="auto" if tools else None,
+                    temperature=0.3,
+                )
+        finally:
+            metrics.session_llm_latency(timer.elapsed)  # per-session quality
         _record_usage(getattr(resp, "usage", None))
         return resp.choices[0].message
 
@@ -91,16 +95,20 @@ class OpenAICompatibleLLM:
         carry `content` text and/or incremental `tool_calls` fragments that
         must be assembled by index before execution.
         """
-        with metrics.get_registry().llm_latency.time():
-            stream = await self._client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                tools=tools or None,
-                tool_choice="auto" if tools else None,
-                temperature=0.3,
-                stream=True,
-                stream_options={"include_usage": True},
-            )
+        timer = metrics.get_registry().llm_latency.time()
+        try:
+            with timer:
+                stream = await self._client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    tools=tools or None,
+                    tool_choice="auto" if tools else None,
+                    temperature=0.3,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                )
+        finally:
+            metrics.session_llm_latency(timer.elapsed)  # per-session quality
         return stream
 
 
@@ -197,6 +205,7 @@ class FallbackLLM:
                 error=str(exc)[:200],
                 circuit_open=self._breaker.is_open,
             )
+            metrics.session_llm_fallback()  # per-session quality signal
             return await getattr(self._fallback, method)(*args)
 
     async def chat_with_tools(
@@ -206,6 +215,7 @@ class FallbackLLM:
     ) -> Any:
         if self._fallback is None or self._breaker.primary_allowed():
             return await self._call_primary("chat_with_tools", messages, tools)
+        metrics.session_llm_fallback()  # circuit open: served by fallback
         return await self._fallback.chat_with_tools(messages, tools)
 
     async def complete(self, messages: list[dict[str, Any]]) -> str:
@@ -226,6 +236,7 @@ class FallbackLLM:
 
     async def _stream_gen(self, messages, tools):
         if self._fallback is not None and not self._breaker.primary_allowed():
+            metrics.session_llm_fallback()  # circuit open: served by fallback
             stream = await self._fallback.stream_with_tools(messages, tools)
             async for chunk in stream:
                 yield chunk
@@ -245,6 +256,7 @@ class FallbackLLM:
             log.warning(
                 "primary LLM stream failed; using fallback", error=str(exc)[:200]
             )
+            metrics.session_llm_fallback()  # per-session quality signal
         stream = await self._fallback.stream_with_tools(messages, tools)
         async for chunk in stream:
             yield chunk
