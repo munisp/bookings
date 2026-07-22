@@ -1,0 +1,118 @@
+# crm-sync-service
+
+OpenDesk → [Twenty CRM](https://twenty.com) one-way sync (SPEC-CRM §B), plus a
+minimal reverse webhook intake. Go 1.23, chi router, zap, pgx/v5,
+segmentio/kafka-go. Listens on **:7010**, Dapr app-id `crm-sync` (sidecar
+`daprd-crm-sync`).
+
+## What it does
+
+1. **Consumes** (consumer group `crm-sync`, direct Kafka via kafka-go):
+   | Topic | Event types | Twenty effect |
+   |---|---|---|
+   | `opendesk.identity.events` | `com.opendesk.identity.TenantProvisioned` | Upsert **Company** `{name, domainName: {primaryLinkUrl: https://<slug>.opendesk.local}}`; `sync_map(kind=tenant)` |
+   | `opendesk.booking.events` | `…BookingCreated` / `…BookingConfirmed` | Upsert **Person** by contact email → phone (find-then-create/update via `GET /rest/people?filter=…`), create/patch **Task** `"{offering} appointment at {starts_at}"` linked to the person; `sync_map(kind=contact, kind=booking)` |
+   | `opendesk.booking.events` | `…BookingRescheduled` | PATCH task `dueAt` (falls back to the full create path when no mapping exists) |
+   | `opendesk.booking.events` | `…BookingCancelled` | PATCH task `status=DONE` + **Note** with the cancellation reason |
+   | `opendesk.conversation.events` | `…ToolInvoked` (`tool=book_appointment`, status `accepted`/`ok`) | **Note** "Booked via AI receptionist" on the person — only when `detail` carries `phone`/`email`; voice-agent-runtime's current payload (`{offering_id, starts_at}`) has none, so the note is skipped (acked) by design |
+2. **Serves HTTP**:
+   - `GET /healthz` — liveness + Postgres ping
+   - `GET /metrics` — Prometheus text format (`crm_sync_counter{name=…}`,
+     `crm_sync_latency_seconds_{count,sum,max}{op=…}`,
+     `crm_sync_twenty_call_duration_seconds` histogram with
+     `method`+`path_class` labels, observed around every Twenty REST call)
+   - `POST /webhooks/twenty` — reverse intake; verifies
+     `X-Twenty-Webhook-Signature` (HMAC-SHA256 over the raw body, hex or
+     base64, optional `sha256=` prefix) against `TWENTY_WEBHOOK_SECRET`, then
+     publishes a CloudEvent (`com.opendesk.crm.twenty.<event>`) to
+     **`opendesk.crm.events`** via Dapr pubsub `pubsub-kafka`
+   - `POST /v1/tasks` — helper for Temporal activities. Accepts BOTH shapes:
+     - canonical: `{personId|phone|email, title, body, dueAt}`
+     - industry activities (notification-worker `CreateStaffAlertTask` /
+       `CreateCRMFollowupTask`): `{tenant_slug, tenant_id, kind
+       ("staff_alert"|"follow_up"), title, body, booking_id, due_at}`
+     `due_at` (RFC3339) is an alias for `dueAt` (`dueAt` wins if both are
+     sent). Person resolution order: `personId` → `booking_id` via
+     `sync_map(kind=booking_contact)` → Twenty lookup by email/phone → none.
+     `staff_alert` tasks are created **unlinked** by design; `follow_up`
+     tries to link but degrades to unlinked (warning log) rather than 4xx.
+     Response `201 {taskId, personId, linked}`.
+
+## Environment
+
+| Var | Default | Notes |
+|---|---|---|
+| `PORT` | `7010` | HTTP listen port |
+| `DATABASE_URL` | — (required) | Postgres DSN for the `crm_sync` DB (created by `infra/postgres/init-scripts/00-create-dbs.sql`) |
+| `KAFKA_BROKERS` | `kafka:9092` | comma-separated broker list |
+| `IDENTITY_EVENTS_TOPIC` | `opendesk.identity.events` | |
+| `BOOKING_EVENTS_TOPIC` | `opendesk.booking.events` | |
+| `CONVERSATION_EVENTS_TOPIC` | `opendesk.conversation.events` | |
+| `CRM_EVENTS_TOPIC` | `opendesk.crm.events` | webhook egress topic (provisioned by `infra/kafka/create-topics.sh`) |
+| `CONSUMER_GROUP` | `crm-sync` | shared by all three readers |
+| `DLQ_TOPIC` | `opendesk.dlq` | |
+| `CONSUMER_ENABLED` | `true` | `false` runs HTTP only (useful for local debugging) |
+| `DAPR_HOST` / `DAPR_HTTP_PORT` | `daprd-crm-sync` / `3500` | sidecar address |
+| `DAPR_PUBSUB_NAME` | `pubsub-kafka` | pubsub component (scope `crm-sync` is declared) |
+| `TWENTY_API_URL` | `http://twenty-api:3000` | |
+| `TWENTY_API_KEY` | — (dev placeholder) | see below |
+| `TWENTY_WEBHOOK_SECRET` | — | when empty, `/webhooks/twenty` rejects everything |
+| `TWENTY_RATE_PER_MIN` | `90` | token-bucket rate for Twenty REST calls |
+| `SHUTDOWN_TIMEOUT_SECONDS` | `20` | graceful shutdown budget |
+
+### Creating the Twenty API key (runbook)
+
+1. Start the stack: `docker compose up -d twenty-api twenty-worker twenty-redis`
+   (image pinned to `twentycrm/twenty:v1.3.2`; if Docker Hub lacks that tag,
+   use `:v1.3.1` — confirmed to exist — or `:latest`, see
+   `infra/docker-compose.crm.yml`).
+2. Open http://localhost:3100 (or `https://<gateway>/crm/` through APISIX) and
+   create the admin account.
+3. Go to **Settings → API & Webhooks → API keys → Create key**; copy it.
+4. Export it for compose: `TWENTY_API_KEY=<key> docker compose up -d crm-sync`
+   (compose default is a non-working dev placeholder).
+5. For reverse intake, create a **webhook** in the same settings page pointing
+   at `http://crm-sync:7010/webhooks/twenty` and set `TWENTY_WEBHOOK_SECRET`
+   to the same shared secret you configure the sender with.
+
+## sync_map
+
+Bootstrapped idempotently on startup (schema per SPEC-CRM §B):
+
+```
+sync_map(id serial, kind text, opendesk_id text, twenty_id text,
+         tenant_id uuid, updated_at timestamptz,
+         UNIQUE(kind, opendesk_id, tenant_id))
+```
+
+Kinds: `tenant` (tenant UUID → Twenty company id), `contact` (booking contact
+UUID → Twenty person id), `booking` (booking UUID → Twenty task id),
+`booking_contact` (booking UUID → Twenty person id; used by `/v1/tasks` to
+resolve "the person of booking X"). A nil
+tenant is stored as the zero UUID so the UNIQUE constraint dedupes correctly
+(Postgres treats NULLs as distinct).
+
+Inspect: `docker compose exec postgres psql -U opendesk -d crm_sync -c 'select * from sync_map order by updated_at desc limit 20;'`
+
+## Retries, rate limiting, DLQ
+
+- Twenty calls: token bucket (`TWENTY_RATE_PER_MIN`, default 90/min); retries
+  with exponential backoff on 429/5xx (up to 4 attempts). 4xx ≠ 429 fails
+  fast. Batch awareness: Twenty `/rest/batch/*` accepts ≤60 ops/call — this
+  client uses single-record endpoints only; chunk to ≤60 if batching is added.
+- Kafka processing: each message is attempted **3 times** (500ms · attempt
+  backoff). Poison payloads (unparseable CloudEvent, missing required fields)
+  skip retries. Failures land in **`opendesk.dlq`** as
+  `{source_topic, event_id, event_type, error, failed_at, payload}`; the
+  original offset is committed after the DLQ write so the pipeline never
+  stalls. Replaying = republishing `payload` to `source_topic`.
+- Delivery is at-least-once end to end; all Twenty writes are upserts keyed by
+  `sync_map`, so redelivery is safe.
+
+## Development
+
+```
+go build ./... && go vet ./... && go test ./...
+CONSUMER_ENABLED=false DATABASE_URL=postgres://opendesk:opendesk@localhost:5432/crm_sync \
+  TWENTY_API_URL=http://localhost:3100 TWENTY_API_KEY=... go run ./cmd/server
+```
