@@ -156,6 +156,11 @@ services:
       S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       S3_EXPORTS_BUCKET: exports
+      # Outbound CPS pacing + sender rotation (VOICE-SCALING §4 telephony).
+      OUTBOUND_CPS: ${OUTBOUND_CPS:-1.0}
+      OUTBOUND_BURST: ${OUTBOUND_BURST:-3}
+      PACER_BACKEND: ${PACER_BACKEND:-redis}
+      OUTBOUND_FROM_NUMBERS: ${OUTBOUND_FROM_NUMBERS:-}
     volumes:
     - ./industries:/industries:ro
     ports:
