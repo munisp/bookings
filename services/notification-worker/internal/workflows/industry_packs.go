@@ -211,7 +211,7 @@ func ConsultancyFollowupWorkflow(ctx workflow.Context, in ConsultancyFollowupInp
 	logger := workflow.GetLogger(ctx)
 	ctx = workflow.WithActivityOptions(ctx, sagaActivityOptions())
 
-	state = "awaiting-session-end"
+	state := "awaiting-session-end"
 	if err := workflow.SetQueryHandler(ctx, QueryState, func() (string, error) {
 		return state, nil
 	}); err != nil {
