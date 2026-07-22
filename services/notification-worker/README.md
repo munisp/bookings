@@ -47,10 +47,53 @@ never dead-lettered. Config: `KAFKA_BROKERS`, `BOOKING_EVENTS_TOPIC`,
 bodies (text/template) and invoke Dapr output bindings with operation
 `create`:
 
-- `bindings-smtp` — metadata `emailTo`, `emailFrom`, `subject`
-- `bindings-twilio` — metadata `toNumber`, `fromNumber`
+- `bindings-smtp` — metadata `emailTo`, `emailFrom`, `subject`, `senderNumber`
+- `bindings-twilio` — metadata `toNumber`, `fromNumber`, `senderNumber`
 
 Channels without a recipient (empty email/phone) are skipped.
+
+## Outbound CPS pacing & sender rotation
+
+(docs/VOICE-SCALING.md §4 telephony plane; applied to SPEC-W3 §3
+innovation 7 waitlist backfill and reminder sends.)
+
+The carrier sets two ceilings, not us: **channel count** (hard cap of
+simultaneous calls on the SIP trunk) and **CPS** (call/message *start
+rate*). CPS binds outbound campaigns first, and pacing is one knob for both
+CPS compliance and **spam reputation** — a smooth low start rate is exactly
+what keeps sender numbers off carrier spam lists. Outbound sends from
+workflows therefore never call the binding activities directly; they call
+the single `NotifyPaced` activity, which:
+
+1. **Acquires a CPS token** (activity-side, so workflows stay
+   deterministic) from a token bucket: `OUTBOUND_CPS` tokens/sec, capacity
+   `OUTBOUND_BURST`. With `PACER_BACKEND=redis` (default) the bucket is a
+   Lua script in the shared `redis:6379` — this is the only correct choice
+   with more than one worker replica, since a per-process limiter would
+   silently multiply fleet-wide CPS by the replica count.
+   `PACER_BACKEND=local` uses a `golang.org/x/time/rate` limiter shared by
+   all activities in the process (single-replica dev only).
+2. **Rotates the sender** round-robin through `OUTBOUND_FROM_NUMBERS`
+   (comma list). Redis backend: shared `INCR` counter so rotation
+   interleaves fairly across replicas; local backend: process atomic. The
+   chosen number becomes the Twilio `fromNumber` and is recorded as
+   `senderNumber` in both binding payloads' metadata for reputation
+   tracing. Empty pool → the configured `TWILIO_FROM` default is used.
+
+**Fail-open policy**: when redis is unreachable the pacer logs one warning
+and falls back to the local limiter/counter rather than dropping sends —
+claim links and reminders are time-sensitive, and each replica still paces
+itself locally (worst case replicas × CPS, never an unbounded burst). The
+redis backend is retried on every send and resumes automatically.
+
+**SIP trunk notes** (for when LiveKit SIP lands, `deploy/` trunk config):
+channel count and CPS are *procurement* items — raising either means
+talking to the carrier, not editing config. Size: `channels >= peak
+concurrent calls`, `OUTBOUND_CPS <= carrier CPS per trunk` (and per
+sending-number reputation tier); scale out by adding trunks/numbers and
+regional origination, then raise `OUTBOUND_FROM_NUMBERS` before
+`OUTBOUND_CPS`. The same pacer will gate SIP dials: it sits *before* the
+dial exactly as it now sits before the binding send.
 
 ## Environment variables
 
@@ -69,6 +112,11 @@ Channels without a recipient (empty email/phone) are skipped.
 | `SMTP_FROM` | `no-reply@opendesk.local` | Sender address |
 | `TWILIO_FROM` | `+10000000000` | Sender number |
 | `OPENSEARCH_URL` | `http://opensearch:9200` | For the onboarding search-alias activity |
+| `OUTBOUND_CPS` | `1.0` | Outbound start rate (sends/sec) — carrier CPS + spam-reputation knob |
+| `OUTBOUND_BURST` | `3` | Token-bucket capacity (max instant sends after idle) |
+| `PACER_BACKEND` | `redis` | `redis` = fleet-wide Lua bucket, `local` = in-process (single replica) |
+| `OUTBOUND_FROM_NUMBERS` | _(empty)_ | Comma-separated sender rotation pool; empty keeps `TWILIO_FROM` |
+| `REDIS_ADDR` | `redis:6379` | Shared redis for the pacer bucket + rotation counter |
 | `SHUTDOWN_TIMEOUT_SECONDS` | `20` | Graceful shutdown budget |
 
 ## Payments contract
@@ -85,6 +133,11 @@ per SPEC §9 are applied inside payments-service).
 `internal/workflows/booking_saga_test.go` uses the Temporal testsuite:
 happy-path ordering, reverse-order compensation (`VoidHold` → `ReleaseSlot`)
 on `ConfirmBooking` failure, and no compensation when `ReserveSlot` fails.
+`waitlist_test.go` / `reminder_test.go` assert every outbound send goes
+through the `NotifyPaced` wrapper with order preserved;
+`internal/pacer/pacer_test.go` covers burst enforcement, round-robin
+rotation (local + redis-INCR) and redis-down fail-open;
+`internal/activities/paced_test.go` covers pacing-before-dispatch.
 
 ## Run
 
