@@ -1,0 +1,136 @@
+# Voice worker plane — LiveKit Agents workers running the OpenDesk voice
+# pipeline (silero VAD -> faster-whisper STT -> Ollama LLM -> Piper TTS).
+#
+# Design (docs/VOICE-SCALING.md §2, per "Scaling Voice Agents: Concurrency
+# at Every Layer"):
+#
+# * Each concurrent call occupies ONE worker job process. Workers are
+#   CPU-bound, not RAM-bound: ~4 cores / 8Gi hosts roughly 10-25 concurrent
+#   jobs. Size for CPU first.
+# * Workers GATE admission themselves: load_fnc (CPU) / load_threshold 0.7
+#   means a worker above 70% CPU stops accepting new jobs — LiveKit then
+#   dispatches to another worker. The HPA (voice-worker-hpa.yaml) scales UP
+#   at 50% average CPU, i.e. deliberately BELOW the 0.7 gate, so new
+#   capacity exists before workers start refusing calls.
+# * Prewarming: AGENT_IDLE_PROCESSES=2 keeps two job subprocesses warm with
+#   PRELOAD_MODELS=true (whisper model loaded at boot, not first call) —
+#   this kills the cold-start "dead air" on the first call after scale-up.
+# * Drain: terminationGracePeriodSeconds 900 (15 min) lets in-flight calls
+#   finish on scale-down; the 900s scale-down stabilization window in the
+#   HPA matches this ("scale down lazily").
+# * NODE CLASS: schedule on compute-optimized nodes (e.g. c6i/c5, or
+#   dedicated on-prem cores). NEVER burstable instances (t3/t2): the t3
+#   trap is that voice load is sustained CPU — burstable credits exhaust
+#   mid-peak and the box throttles to a fraction of a core exactly when
+#   calls are live. See nodeSelector below.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: voice-worker
+  namespace: opendesk
+  labels:
+    app: voice-worker
+spec:
+  # replicas is managed by voice-worker-hpa.yaml (min 2 / max 20).
+  replicas: 2
+  selector:
+    matchLabels:
+      app: voice-worker
+  template:
+    metadata:
+      labels:
+        app: voice-worker
+    spec:
+      # Compute-optimized pool only. Label nodes `workload=voice-worker`
+      # (or swap for your provider's compute-optimized label, e.g.
+      # node.kubernetes.io/instance-type: c6i.2xlarge). See header: never
+      # schedule these pods on burstable (t3-class) nodes.
+      nodeSelector:
+        workload: voice-worker
+      # 15-minute drain so in-flight calls complete on scale-down/rollout.
+      terminationGracePeriodSeconds: 900
+      containers:
+        - name: voice-worker
+          image: opendesk/voice-agent-runtime:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -m
+            - app.livekit_worker
+            - start
+          env:
+            - name: LIVEKIT_URL
+              value: ws://livekit-server:7880
+            - name: LIVEKIT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: livekit-keys
+                  key: LIVEKIT_API_KEY
+            - name: LIVEKIT_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: livekit-keys
+                  key: LIVEKIT_API_SECRET
+            # Prewarming: 2 warm job subprocesses per worker; models loaded
+            # at boot so the first call on a fresh pod has no dead air.
+            - name: AGENT_IDLE_PROCESSES
+              value: "2"
+            - name: PRELOAD_MODELS
+              value: "true"
+            # Admission gate: worker stops taking jobs above 70% CPU.
+            # HPA scales up at 50% (see voice-worker-hpa.yaml header).
+            - name: LOAD_THRESHOLD
+              value: "0.7"
+            - name: LLM_BASE_URL
+              value: http://ollama:11434/v1
+            - name: LLM_MODEL
+              value: qwen3:8b
+            - name: LLM_API_KEY
+              value: ollama
+            - name: WHISPER_MODEL
+              value: base
+            - name: PIPER_URL
+              value: http://piper:5500
+            - name: KAFKA_BROKERS
+              value: kafka:9092
+            - name: AGENT_BACKEND
+              value: livekit
+            # Dapr sidecars are not injected on the appliance yet; point at
+            # the voice service directly until the Dapr dataplane lands
+            # (same caveat as deploy/k3s/README.md "Is not (yet)").
+            - name: DAPR_HOST
+              value: voice
+            - name: DAPR_HTTP_PORT
+              value: "7006"
+          # 4c/8Gi per worker ~= 10-25 concurrent jobs (article sizing).
+          # Requests at half the limit keep 2 replicas schedulable on a
+          # single compute node while reserving burst headroom per call.
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          # No HTTP readiness probe: the worker CLI serves no /healthz.
+          # Liveness is the LiveKit worker websocket; the HPA reads CPU via
+          # metrics-server. (Add an exec probe on the process if needed.)
+---
+# Headless Service so Prometheus can discover worker /metrics endpoints
+# (voice_* series; per docs/VOICE-SCALING.md §3 instrumentation).
+apiVersion: v1
+kind: Service
+metadata:
+  name: voice-worker
+  namespace: opendesk
+  labels:
+    app: voice-worker
+spec:
+  clusterIP: None
+  selector:
+    app: voice-worker
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: 8080

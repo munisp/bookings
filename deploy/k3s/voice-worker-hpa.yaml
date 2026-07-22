@@ -1,0 +1,62 @@
+# HPA for the voice worker plane (docs/VOICE-SCALING.md §2).
+#
+# THE key asymmetry from the article: scale UP *below* the worker's own
+# admission gate, scale DOWN lazily.
+#
+# * Workers self-gate at LOAD_THRESHOLD=0.7 (70% CPU): above that they
+#   refuse new jobs and LiveKit dispatches elsewhere. If the autoscaler also
+#   triggered at 70%, scale-up would only start once workers were ALREADY
+#   turning calls away — and new pods take minutes to boot (model preload).
+#   Triggering at 50% average CPU keeps a buffer of un-gated capacity ahead
+#   of demand: by the time existing workers approach 0.7, fresh pods are
+#   warm and registered.
+# * Scale-down is deliberately slow (15 min stabilization, matching the
+#   15-minute pod drain): voice load is bursty within a business day, and
+#   flap (down then straight back up) costs a cold model load per cycle.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: voice-worker
+  namespace: opendesk
+  labels:
+    app: voice-worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: voice-worker
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # 50% of REQUESTS (2 cpu) — i.e. ~1 core average per pod, well
+          # below the 0.7 worker load gate measured against the pod's
+          # actual capacity.
+          averageUtilization: 50
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        # Add at most 4 pods per 30s during a ramp (e.g. 500-call campaign
+        # start); percent policy lets big fleets surge faster than small ones.
+        - type: Pods
+          value: 4
+          periodSeconds: 30
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 900
+      policies:
+        # Remove at most 1 pod per minute, after 15 min of sustained low
+        # load — never drop capacity faster than calls can drain (900s pod
+        # termination grace).
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+      selectPolicy: Min

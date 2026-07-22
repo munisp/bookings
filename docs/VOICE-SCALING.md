@@ -1,5 +1,19 @@
 # Voice Scaling: Article Insights → OpenDesk Implementation Plan
 
+> **STATUS: IMPLEMENTED** ✅ (all P0 + P1 items)
+> - P0 prewarming + load gating: `services/voice-agent-runtime/app/livekit_worker.py` (`PRELOAD_MODELS`, `AGENT_IDLE_PROCESSES`, `LOAD_THRESHOLD`, psutil `load_fnc`)
+> - P0 async tools + filler + 4s timeout: `app/async_tools.py` (+ SSE ack frames in chat path)
+> - P1 inference metrics: `app/metrics.py` → `/metrics` (voice_stt/llm/tts_latency, tokens, tool calls, active sessions)
+> - P1 LLM fallback chain + circuit breaker: `app/pipeline/llm.py` (`LLM_FALLBACK_*`, Ollama→MiniMax)
+> - P1 LiveKit prod DaemonSet (5h drain) + worker HPA (0.5 up / lazy down): `deploy/k3s/livekit-server.yaml`, `voice-worker*.yaml`
+> - P1 Concurrency Ceilings dashboard: `infra/observability/dashboards/concurrency-ceilings.json`
+> - P1 load-test harness: `tests/load/voice_ramp.py` (`make loadtest-voice`)
+> - P1 capacity planning + cost calculator: `docs/runbooks/capacity-planning.md`
+> - P1 outbound CPS pacer + sender rotation (Redis token bucket): `services/notification-worker/internal/pacer/`
+> - P1 DB pool sizing: `PG_MAX_CONNS` in booking-service + runbook formulas
+> - Telephony SIP trunk config remains the only deferred item (arrives with the SIP feature work).
+
+
 Source: "Scaling Voice Agents: Concurrency at Every Layer" — Mahimai Raja J (Medium, Voice AI Mastery).
 Core thesis: **a voice agent is not one system with one capacity number — it is a stack of independent layers, each with its own concurrency ceiling. Real capacity = the lowest ceiling. Scaling the wrong layer is wasted money.**
 
