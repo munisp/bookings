@@ -13,12 +13,21 @@
 // the read path (which knows the tenant timezone) and the invalidation
 // path (bookingops.Cancel does not), and UTC is the only timezone both
 // share. Bucket boundaries only affect cache granularity, not correctness.
+//
+// Serve-stale (Wave 5 #5): every SetSlots also writes a stale copy under
+// "stale:"+key with TTL fresh+staleTTL, plus an in-process copy that
+// survives a Redis outage. When the read path cannot compute a fresh answer
+// (Postgres error) or Redis itself is down, the handler falls back to
+// GetSlotsStale and answers with X-Cache: stale for at most staleTTL past
+// the fresh TTL. Stale copies are invalidated together with fresh ones, so
+// a booking write never leaves an already-known-wrong value servable.
 package cache
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,37 +39,62 @@ import (
 // DefaultTTL is used when CACHE_TTL_SECONDS is unset (SPEC-W3 §3: 120s).
 const DefaultTTL = 120 * time.Second
 
+// DefaultStaleTTL is used when CACHE_STALE_TTL_SECONDS is unset (15min).
+const DefaultStaleTTL = 15 * time.Minute
+
+// memEntry is the in-process last-known-good copy (survives Redis outages).
+type memEntry struct {
+	slots     []availability.Slot
+	expiresAt time.Time
+}
+
 // Cache wraps a go-redis client. A nil *Cache is a valid, disabled cache:
 // all methods are no-ops / misses, so callers need no nil checks.
 type Cache struct {
-	rdb redis.UniversalClient
-	ttl time.Duration
-	log *zap.Logger
+	rdb      redis.UniversalClient
+	ttl      time.Duration
+	staleTTL time.Duration
+	log      *zap.Logger
+
+	mu       sync.Mutex
+	memStale map[string]memEntry
 }
 
 // New connects to Redis at addr (REDIS_ADDR). Empty addr disables caching
-// (returns nil). ttl <= 0 falls back to DefaultTTL.
-func New(addr string, ttl time.Duration, log *zap.Logger) *Cache {
+// (returns nil). ttl <= 0 falls back to DefaultTTL, staleTTL <= 0 to
+// DefaultStaleTTL.
+func New(addr string, ttl, staleTTL time.Duration, log *zap.Logger) *Cache {
 	if addr == "" {
 		return nil
 	}
 	if ttl <= 0 {
 		ttl = DefaultTTL
 	}
+	if staleTTL <= 0 {
+		staleTTL = DefaultStaleTTL
+	}
 	if log == nil {
 		log = zap.NewNop()
 	}
 	return &Cache{
-		rdb: redis.NewClient(&redis.Options{Addr: addr}),
-		ttl: ttl,
-		log: log,
+		rdb:      redis.NewClient(&redis.Options{Addr: addr}),
+		ttl:      ttl,
+		staleTTL: staleTTL,
+		log:      log,
+		memStale: map[string]memEntry{},
 	}
 }
 
 // newWithClient builds a Cache around an existing client (tests).
-func newWithClient(rdb redis.UniversalClient, ttl time.Duration) *Cache {
-	return &Cache{rdb: rdb, ttl: ttl, log: zap.NewNop()}
+func newWithClient(rdb redis.UniversalClient, ttl, staleTTL time.Duration) *Cache {
+	if staleTTL <= 0 {
+		staleTTL = DefaultStaleTTL
+	}
+	return &Cache{rdb: rdb, ttl: ttl, staleTTL: staleTTL, log: zap.NewNop(), memStale: map[string]memEntry{}}
 }
+
+// staleKey returns the key of the last-known-good copy for a fresh key.
+func staleKey(key string) string { return "stale:" + key }
 
 // Key returns the cache key for one UTC day bucket.
 func Key(tenantID, offeringID, memberID uuid.UUID, day time.Time) string {
@@ -108,8 +142,10 @@ func (c *Cache) GetSlots(ctx context.Context, key string) ([]availability.Slot, 
 	return slots, true
 }
 
-// SetSlots stores a slot list under key with the configured TTL. Failures
-// are logged and swallowed — caching is an optimization, never fatal.
+// SetSlots stores a slot list under key with the configured TTL, refreshes
+// the stale copies (Redis "stale:"+key with TTL fresh+staleTTL, and the
+// in-process fallback). Failures are logged and swallowed — caching is an
+// optimization, never fatal.
 func (c *Cache) SetSlots(ctx context.Context, key string, slots []availability.Slot) {
 	if c == nil {
 		return
@@ -125,6 +161,48 @@ func (c *Cache) SetSlots(ctx context.Context, key string, slots []availability.S
 	if err := c.rdb.Set(ctx, key, raw, c.ttl).Err(); err != nil {
 		c.log.Warn("availability cache write failed", zap.Error(err))
 	}
+	if err := c.rdb.Set(ctx, staleKey(key), raw, c.ttl+c.staleTTL).Err(); err != nil {
+		c.log.Warn("availability stale-cache write failed", zap.Error(err))
+	}
+	c.mu.Lock()
+	c.memStale[key] = memEntry{slots: slots, expiresAt: time.Now().Add(c.ttl + c.staleTTL)}
+	c.mu.Unlock()
+}
+
+// GetSlotsStale returns the last-known-good slot list for key: first the
+// Redis stale copy, then the in-process copy (which survives a Redis
+// outage). The second return value is false when nothing usable is cached
+// or the stale window (fresh TTL + staleTTL) has passed.
+func (c *Cache) GetSlotsStale(ctx context.Context, key string) ([]availability.Slot, bool) {
+	if c == nil {
+		return nil, false
+	}
+	raw, err := c.rdb.Get(ctx, staleKey(key)).Bytes()
+	switch {
+	case err == nil:
+		var slots []availability.Slot
+		if uerr := json.Unmarshal(raw, &slots); uerr != nil {
+			c.log.Warn("availability stale entry corrupt", zap.Error(uerr))
+			return nil, false
+		}
+		return slots, true
+	case errors.Is(err, redis.Nil):
+		// no Redis stale copy — fall through to the in-process copy
+	default:
+		c.log.Warn("availability stale read failed; trying in-process copy", zap.Error(err))
+	}
+	return c.memGet(key)
+}
+
+// memGet returns the unexpired in-process stale copy.
+func (c *Cache) memGet(key string) ([]availability.Slot, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.memStale[key]
+	if !ok || time.Now().After(e.expiresAt) {
+		return nil, false
+	}
+	return e.slots, true
 }
 
 // Invalidate deletes the day-bucket keys covering [from, to] for one
@@ -142,13 +220,19 @@ func (c *Cache) Invalidate(ctx context.Context, tenantID, offeringID, memberID u
 	if len(buckets) == 0 {
 		return
 	}
-	keys := make([]string, 0, len(buckets))
+	keys := make([]string, 0, 2*len(buckets))
 	for _, d := range buckets {
-		keys = append(keys, Key(tenantID, offeringID, memberID, d))
+		k := Key(tenantID, offeringID, memberID, d)
+		keys = append(keys, k, staleKey(k))
 	}
 	if err := c.rdb.Del(ctx, keys...).Err(); err != nil {
 		c.log.Warn("availability cache invalidation failed", zap.Strings("keys", keys), zap.Error(err))
 	}
+	c.mu.Lock()
+	for _, k := range keys {
+		delete(c.memStale, k)
+	}
+	c.mu.Unlock()
 }
 
 // Close releases the Redis client.
