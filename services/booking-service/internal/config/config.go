@@ -15,6 +15,7 @@ import (
 type Config struct {
 	Port               int           // HTTP listen port (PORT, default 7002)
 	DatabaseURL        string        // postgres DSN for the booking DB (DATABASE_URL)
+	PGMaxConns         int32         // pgxpool MaxConns (PG_MAX_CONNS, default 20 — peak-sized per capacity runbook)
 	PermifyURL         string        // Permify HTTP API base (http://permify:3476)
 	DaprHost           string        // daprd host (default daprd-booking)
 	DaprHTTPPort       int           // daprd HTTP port (default 3500)
@@ -41,8 +42,11 @@ type Config struct {
 // Load reads configuration from the environment.
 func Load() (Config, error) {
 	cfg := Config{
-		Port:               envInt("PORT", 7002),
-		DatabaseURL:        os.Getenv("DATABASE_URL"),
+		Port:        envInt("PORT", 7002),
+		DatabaseURL: os.Getenv("DATABASE_URL"),
+		// Voice turns fan out into availability lookups; default 20 covers
+		// ~10 peak concurrent calls at 2 mid-call turns each (runbook §DB).
+		PGMaxConns:         int32(envInt("PG_MAX_CONNS", 20)),
 		PermifyURL:         envStr("PERMIFY_URL", "http://permify:3476"),
 		DaprHost:           envStr("DAPR_HOST", "daprd-booking"),
 		DaprHTTPPort:       envInt("DAPR_HTTP_PORT", 3500),
