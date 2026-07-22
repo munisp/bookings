@@ -163,7 +163,10 @@ func SalonDepositWorkflow(ctx workflow.Context, in SalonDepositInput) error {
 			}
 		}
 		state = "sending-deposit-reminder"
-		if err := workflow.ExecuteActivity(ctx, ActivitySendDepositReminder, in).Get(ctx, nil); err != nil {
+		// Outbound send: route through NotifyPaced (CPS token + sender
+		// rotation) like every other workflow-driven notification.
+		req := PacedSendRequest{Kind: PacedSendDepositReminder, Deposit: &PacedDepositReminderSend{Input: in}}
+		if err := workflow.ExecuteActivity(ctx, ActivityNotifyPaced, req).Get(ctx, nil); err != nil {
 			logger.Error("SendDepositReminder failed", "error", err)
 			state = "deposit-reminder-failed"
 		}
@@ -208,7 +211,7 @@ func ConsultancyFollowupWorkflow(ctx workflow.Context, in ConsultancyFollowupInp
 	logger := workflow.GetLogger(ctx)
 	ctx = workflow.WithActivityOptions(ctx, sagaActivityOptions())
 
-	state := "awaiting-session-end"
+	state = "awaiting-session-end"
 	if err := workflow.SetQueryHandler(ctx, QueryState, func() (string, error) {
 		return state, nil
 	}); err != nil {
