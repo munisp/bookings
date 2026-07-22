@@ -54,6 +54,13 @@ var ErrNotFound = errors.New("sync_map: mapping not found")
 // /v1/tasks helper resolve "the person of booking X" without a Twenty query.
 const KindBookingContact = "booking_contact"
 
+// KindContactPhone maps a contact phone number (as confirmed by the caller
+// during an AI voice session) to the Twenty person id. Written alongside the
+// kind=contact mapping at booking sync; read by the SessionEnded call-quality
+// note path when the Twenty people lookup by phone misses (e.g. the person
+// record's phone formatting differs from the confirmed number).
+const KindContactPhone = "contact_phone"
+
 // normTenant maps nil to uuid.Nil (stored as a regular value, never NULL).
 func normTenant(t *uuid.UUID) uuid.UUID {
 	if t == nil {

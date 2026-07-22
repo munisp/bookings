@@ -3,6 +3,8 @@ package twentyc
 
 import (
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -122,6 +124,63 @@ func CancelNote(reason string) string {
 
 // AIBookingNote is the Note body for AI-receptionist bookings (SPEC-CRM §B).
 const AIBookingNote = "Booked via AI receptionist"
+
+// CallSummaryNoteTitle is the Note title for AI call-quality summaries
+// (enriched SessionEnded events on opendesk.conversation.events).
+const CallSummaryNoteTitle = "📞 AI call summary"
+
+// CallSummaryNote renders the markdown-ish Note body for an enriched
+// SessionEnded call-quality payload, e.g.:
+//
+//	📞 AI call summary — duration 95s, 6 turns, tools: book_appointment×1,
+//	avg LLM 820ms (max 1400ms), escalated: no, fallback used: no
+//
+// Optional segments are omitted when the payload lacks them (no tool calls,
+// no LLM latency samples, no avg sentiment). Sentiment is NOT produced by
+// the voice runtime — per-turn sentiment/intent lives in the OpenSearch
+// conversations index (conversation-service intel); the field exists only
+// for future/event-external enrichment.
+func CallSummaryNote(q events.CallQuality) string {
+	parts := []string{
+		fmt.Sprintf("duration %ds", int(math.Round(q.DurationS))),
+		fmt.Sprintf("%d turns", q.TurnCount),
+	}
+	if len(q.ToolCalls) > 0 {
+		names := make([]string, 0, len(q.ToolCalls))
+		for name := range q.ToolCalls {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		tools := make([]string, 0, len(names))
+		for _, name := range names {
+			tools = append(tools, fmt.Sprintf("%s×%d", name, q.ToolCalls[name]))
+		}
+		parts = append(parts, "tools: "+strings.Join(tools, ", "))
+	}
+	if q.AvgLLMLatencyMs != nil {
+		seg := fmt.Sprintf("avg LLM %dms", *q.AvgLLMLatencyMs)
+		if q.MaxLLMLatencyMs != nil {
+			seg += fmt.Sprintf(" (max %dms)", *q.MaxLLMLatencyMs)
+		}
+		parts = append(parts, seg)
+	}
+	if q.SttCalls > 0 || q.TtsCalls > 0 {
+		parts = append(parts, fmt.Sprintf("stt %d calls, tts %d calls", q.SttCalls, q.TtsCalls))
+	}
+	parts = append(parts, "escalated: "+yesNo(q.Escalated))
+	parts = append(parts, "fallback used: "+yesNo(q.LLMFallbackUsed))
+	if q.AvgSentiment != nil {
+		parts = append(parts, fmt.Sprintf("avg sentiment %.2f", *q.AvgSentiment))
+	}
+	return CallSummaryNoteTitle + " — " + strings.Join(parts, ", ")
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
+}
 
 // FormatTime renders a timestamp in Twenty's accepted RFC3339 form (UTC).
 func FormatTime(t time.Time) string { return t.UTC().Format(time.RFC3339) }
