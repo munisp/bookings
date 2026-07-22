@@ -9,107 +9,122 @@ import (
 	"github.com/google/uuid"
 )
 
-// portal_tokens store behavior (Wave 5 #7), exercised against the fakeTx
-// plumbing from extra_outbox_test.go (SQL-level verification).
+// Portal token lifecycle against embedded Postgres (Wave 5 #7).
 
-func TestCreatePortalTokenGeneratesID(t *testing.T) {
-	tx := &fakeTx{}
-	s := testStoreWithTx(tx)
-	tok := &PortalToken{
-		TenantID:  uuid.New(),
-		ContactID: uuid.New(),
-		TokenHash: "deadbeef",
+func TestPortalTokenLifecycle(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	tenantID := uuid.New()
+
+	contact := Contact{TenantID: tenantID, Name: "Pia", Phone: "+15550999"}
+	if err := st.CreateContact(ctx, &contact); err != nil {
+		t.Fatal(err)
+	}
+
+	tok := PortalToken{
+		TenantID:  tenantID,
+		ContactID: contact.ID,
+		TokenHash: "hash-1",
 		Channel:   PortalChannelSMS,
 		ExpiresAt: time.Now().Add(10 * time.Minute),
 	}
-	if err := s.CreatePortalToken(context.Background(), tok); err != nil {
-		t.Fatal(err)
+	if err := st.CreatePortalToken(ctx, &tok); err != nil {
+		t.Fatalf("create token: %v", err)
 	}
-	if tok.ID == uuid.Nil {
-		t.Fatal("CreatePortalToken must generate an id")
+	if tok.ID == uuid.Nil || tok.CreatedAt.IsZero() {
+		t.Fatal("expected generated id + created_at")
 	}
-	if tok.CreatedAt.IsZero() {
-		t.Fatal("CreatePortalToken must scan created_at")
-	}
-	found := false
-	for _, q := range tx.queries {
-		if q.kind == "queryrow" && containsStr(q.sql, "INSERT INTO portal_tokens") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("expected an INSERT INTO portal_tokens, got %v", tx.queries)
-	}
-}
 
-func TestGetActivePortalTokenNotFoundMaps(t *testing.T) {
-	tx := &fakeTx{}
-	s := testStoreWithTx(tx)
-	// fakeRow.Scan succeeds, so simulate no rows via a scanning error row.
-	// Instead assert the happy path shape: the query targets active tokens.
-	_, err := s.GetActivePortalToken(context.Background(), uuid.New(), uuid.New())
+	got, err := st.GetActivePortalToken(ctx, tenantID, contact.ID)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("get active: %v", err)
 	}
-	for _, q := range tx.queries {
-		if containsStr(q.sql, "portal_tokens") {
-			if !containsStr(q.sql, "consumed_at IS NULL") || !containsStr(q.sql, "expires_at > now()") {
-				t.Fatalf("active-token query missing freshness predicates: %s", q.sql)
-			}
-			return
+	if got.ID != tok.ID || got.TokenHash != "hash-1" || got.Attempts != 0 {
+		t.Fatalf("unexpected token %+v", got)
+	}
+
+	// Failed attempts count up.
+	for i := 1; i <= 2; i++ {
+		n, err := st.IncrementPortalTokenAttempts(ctx, tenantID, tok.ID)
+		if err != nil {
+			t.Fatalf("increment: %v", err)
+		}
+		if n != i {
+			t.Fatalf("attempts = %d, want %d", n, i)
 		}
 	}
-	t.Fatal("no portal_tokens query issued")
+
+	// Consume; afterwards no active token remains.
+	if err := st.ConsumePortalToken(ctx, tenantID, tok.ID); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	if _, err := st.GetActivePortalToken(ctx, tenantID, contact.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("active after consume err = %v, want ErrNotFound", err)
+	}
+	// Consuming twice is not possible.
+	if err := st.ConsumePortalToken(ctx, tenantID, tok.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("re-consume err = %v, want ErrNotFound", err)
+	}
 }
 
-func TestIncrementAndConsume(t *testing.T) {
-	tx := &fakeTx{execRowsAffected: 1}
-	s := testStoreWithTx(tx)
+func TestPortalTokenExpiryAndTenantIsolation(t *testing.T) {
+	st := newTestStore(t)
 	ctx := context.Background()
+	tenantID := uuid.New()
 
-	if _, err := s.IncrementPortalTokenAttempts(ctx, uuid.New(), uuid.New()); err != nil {
+	contact := Contact{TenantID: tenantID, Name: "Eli", Phone: "+15550888"}
+	if err := st.CreateContact(ctx, &contact); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ConsumePortalToken(ctx, uuid.New(), uuid.New()); err != nil {
+
+	// Expired tokens are never active.
+	expired := PortalToken{
+		TenantID: tenantID, ContactID: contact.ID, TokenHash: "old",
+		Channel: PortalChannelSMS, ExpiresAt: time.Now().Add(-time.Minute),
+	}
+	if err := st.CreatePortalToken(ctx, &expired); err != nil {
 		t.Fatal(err)
 	}
-	var sawIncr, sawConsume bool
-	for _, q := range tx.queries {
-		if containsStr(q.sql, "attempts = attempts + 1") {
-			sawIncr = true
-		}
-		if containsStr(q.sql, "consumed_at=now()") && containsStr(q.sql, "consumed_at IS NULL") {
-			sawConsume = true
-		}
-	}
-	if !sawIncr || !sawConsume {
-		t.Fatalf("missing increment (%v) or consume (%v): %v", sawIncr, sawConsume, tx.queries)
+	if _, err := st.GetActivePortalToken(ctx, tenantID, contact.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired token active, err = %v", err)
 	}
 
-	// Consume on a missing token maps to ErrNotFound.
-	tx2 := &fakeTx{execRowsAffected: 0}
-	s2 := testStoreWithTx(tx2)
-	if err := s2.ConsumePortalToken(ctx, uuid.New(), uuid.New()); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("err = %v, want ErrNotFound", err)
+	// A valid token is invisible to another tenant.
+	valid := PortalToken{
+		TenantID: tenantID, ContactID: contact.ID, TokenHash: "new",
+		Channel: PortalChannelSMS, ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+	if err := st.CreatePortalToken(ctx, &valid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetActivePortalToken(ctx, uuid.New(), contact.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-tenant token visible, err = %v", err)
 	}
 }
 
-func TestGetContactByChannelEmailLowercases(t *testing.T) {
-	tx := &fakeTx{}
-	s := testStoreWithTx(tx)
-	_, err := s.GetContactByChannel(context.Background(), uuid.New(), PortalChannelEmail, "  ")
-	if err != nil {
+func TestGetContactByChannel(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	tenantID := uuid.New()
+
+	c := Contact{TenantID: tenantID, Name: "Nia", Phone: "+15550777", Email: "Nia@Example.com"}
+	if err := st.CreateContact(ctx, &c); err != nil {
 		t.Fatal(err)
 	}
-	if len(tx.queries) != 1 || !containsStr(tx.queries[0].sql, "lower(email)") {
-		t.Fatalf("email channel must query lower(email): %v", tx.queries)
+	byPhone, err := st.GetContactByChannel(ctx, tenantID, PortalChannelSMS, "+15550777")
+	if err != nil || byPhone.ID != c.ID {
+		t.Fatalf("phone lookup: %v %+v", err, byPhone)
 	}
-	tx2 := &fakeTx{}
-	s2 := testStoreWithTx(tx2)
-	if _, err := s2.GetContactByChannel(context.Background(), uuid.New(), PortalChannelSMS, "+1555"); err != nil {
-		t.Fatal(err)
+	// e-mail matches case-insensitively.
+	byMail, err := st.GetContactByChannel(ctx, tenantID, PortalChannelEmail, "nia@example.COM")
+	if err != nil || byMail.ID != c.ID {
+		t.Fatalf("email lookup: %v %+v", err, byMail)
 	}
-	if !containsStr(tx2.queries[0].sql, "phone") || containsStr(tx2.queries[0].sql, "lower(") {
-		t.Fatalf("sms channel must query phone: %v", tx2.queries)
+	if _, err := st.GetContactByChannel(ctx, tenantID, PortalChannelSMS, "+100"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown phone err = %v, want ErrNotFound", err)
+	}
+	// Tenant isolation: same phone under another tenant does not resolve.
+	if _, err := st.GetContactByChannel(ctx, uuid.New(), PortalChannelSMS, "+15550777"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-tenant contact visible, err = %v", err)
 	}
 }
