@@ -89,11 +89,14 @@ class PiperTTS:
         text = text.strip()
         if not text:
             return b""
-        with metrics.get_registry().tts_latency.time():
-            if self.mode == "subprocess":
-                pcm, rate = await self._synthesize_subprocess(text)
-            else:
-                pcm, rate = await self._synthesize_http(text)
+        try:
+            with metrics.get_registry().tts_latency.time():
+                if self.mode == "subprocess":
+                    pcm, rate = await self._synthesize_subprocess(text)
+                else:
+                    pcm, rate = await self._synthesize_http(text)
+        finally:
+            metrics.session_tts()  # per-session quality accumulator
         if rate != self.sample_rate:
             log.warning(
                 "piper sample rate mismatch; audio may be pitched",

@@ -122,5 +122,8 @@ class FasterWhisperSTT:
             )
             return " ".join(seg.text.strip() for seg in segments).strip()
 
-        with metrics.get_registry().stt_latency.time():
-            return await asyncio.to_thread(_run)
+        try:
+            with metrics.get_registry().stt_latency.time():
+                return await asyncio.to_thread(_run)
+        finally:
+            metrics.session_stt()  # per-session quality accumulator
