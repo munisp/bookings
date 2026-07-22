@@ -127,6 +127,42 @@ curl -s localhost:7006/voice/chat -H 'content-type: application/json' \
   -d '{"site_slug":"demo","message":"What services do you offer?"}'
 ```
 
+## Concurrency & scaling (VOICE-SCALING)
+
+Per-layer concurrency disciplines from `docs/VOICE-SCALING.md`:
+
+- **Worker prewarming (P0)**: `PRELOAD_MODELS=true` (default) makes the
+  worker's `prewarm_fnc` eagerly load the whisper model and run one piper
+  warmup synthesis in every warm job process — no first-call dead air.
+  `AGENT_IDLE_PROCESSES=2` keeps that many job processes warm
+  (`num_idle_processes`). Prewarm failures degrade to lazy loading.
+- **Load gating (P0)**: the worker advertises an explicit CPU-based
+  `load_fnc` (psutil) and stops accepting jobs above `LOAD_THRESHOLD=0.7`.
+- **Async tools with filler (P0)**: slow Dapr tools (`get_availability`,
+  `book_appointment`, `reschedule_appointment`, `cancel_appointment`,
+  `lookup_appointment`, `knowledge_search`) speak a per-industry ack line
+  (tenant `terminology["tool_ack"]` override → industry default →
+  "Let me check that for you…") when the call outlasts a 400 ms grace
+  window (`TOOL_ACK_GRACE_MS`); the SSE chat path emits an immediate
+  `{"ack": "..."}` event instead. Every tool call is bounded by
+  `TOOL_TIMEOUT_SECONDS=4` — on timeout the agent speaks an apology
+  ("I'm having trouble reaching our booking system…") instead of dead air;
+  timeouts never raise into the pipeline.
+- **Inference metrics (P1)**: hand-rolled Prometheus exposition at
+  `GET /metrics`: `voice_stt_latency_seconds`, `voice_llm_latency_seconds`,
+  `voice_llm_tokens_total{kind=prompt|completion}`,
+  `voice_tts_latency_seconds`, `voice_tool_calls_total{tool,result}`,
+  `voice_active_sessions`.
+- **LLM fallback chain (P1)**: when `LLM_FALLBACK_BASE_URL` (+
+  `LLM_FALLBACK_MODEL`/`LLM_FALLBACK_API_KEY`) is set, a primary failure —
+  connection error, 429, 5xx, or a call exceeding `LLM_TIMEOUT=20`s — retries
+  that call against the fallback endpoint. A circuit breaker
+  (`LLM_CB_FAILURES=3`, `LLM_CB_COOLDOWN_S=60`) routes around a flapping
+  primary, then probes it. Covers the chat/tool-loop paths (buffered + SSE);
+  the LiveKit worker's `livekit-plugins-openai` LLM node cannot hot-swap
+  endpoints mid-process, so the worker path relies on the primary endpoint
+  (see the note in `app/livekit_worker.py`).
+
 ## Notes / simplifications
 
 - Session state + chat history are in-memory (dev-grade); swap

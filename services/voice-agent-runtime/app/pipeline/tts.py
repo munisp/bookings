@@ -22,6 +22,7 @@ from typing import Protocol
 
 import httpx
 
+from .. import metrics
 from ..logging import get_logger
 
 log = get_logger("tts")
@@ -88,10 +89,11 @@ class PiperTTS:
         text = text.strip()
         if not text:
             return b""
-        if self.mode == "subprocess":
-            pcm, rate = await self._synthesize_subprocess(text)
-        else:
-            pcm, rate = await self._synthesize_http(text)
+        with metrics.get_registry().tts_latency.time():
+            if self.mode == "subprocess":
+                pcm, rate = await self._synthesize_subprocess(text)
+            else:
+                pcm, rate = await self._synthesize_http(text)
         if rate != self.sample_rate:
             log.warning(
                 "piper sample rate mismatch; audio may be pitched",

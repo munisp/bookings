@@ -11,6 +11,7 @@ from typing import Protocol
 
 import numpy as np
 
+from .. import metrics
 from ..logging import get_logger
 
 log = get_logger("stt")
@@ -72,6 +73,15 @@ class FasterWhisperSTT:
                 self._model = await asyncio.to_thread(self._load_sync)
         return self._model
 
+    def preload_sync(self) -> None:
+        """Eagerly load the model (worker prewarm hook runs synchronously)."""
+        if self._model is None:
+            self._model = self._load_sync()
+
+    async def preload(self) -> None:
+        """Async variant of preload_sync (control-plane boot, tests)."""
+        await self._ensure_model()
+
     @staticmethod
     def _pcm_to_float32(
         pcm_s16le: bytes, sample_rate: int, channels: int
@@ -112,4 +122,5 @@ class FasterWhisperSTT:
             )
             return " ".join(seg.text.strip() for seg in segments).strip()
 
-        return await asyncio.to_thread(_run)
+        with metrics.get_registry().stt_latency.time():
+            return await asyncio.to_thread(_run)
