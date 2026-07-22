@@ -17,8 +17,10 @@ Series:
 
 from __future__ import annotations
 
+import contextvars
 import threading
 import time
+from typing import Any
 
 DEFAULT_BUCKETS = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0)
 
@@ -78,13 +80,15 @@ class _Timer:
     def __init__(self, hist: Histogram) -> None:
         self._hist = hist
         self._start = 0.0
+        self.elapsed = 0.0  # seconds measured by the last `with` block
 
     def __enter__(self) -> "_Timer":
         self._start = time.perf_counter()
         return self
 
     def __exit__(self, *exc) -> None:
-        self._hist.observe(time.perf_counter() - self._start)
+        self.elapsed = time.perf_counter() - self._start
+        self._hist.observe(self.elapsed)
 
 
 class Counter:
@@ -203,3 +207,169 @@ def reset_registry() -> Registry:
 
 def render() -> str:
     return _registry.render()
+
+
+# ---------------------------------------------------------------------------
+# Per-session call-quality accumulator (CRM gap fix): while the registry
+# above aggregates process-wide for Prometheus, a SessionMetrics instance
+# tracks the signals of ONE conversation so they can be attached to the
+# SessionEnded CloudEvent (consumed by crm-sync-service to write a Twenty
+# call-summary note).
+#
+# The "active session" is a contextvar: the LiveKit worker activates one
+# SessionMetrics per job (one room = one session per job process), and the
+# recording call sites below no-op when no session is active (control-plane
+# scrape paths, unit tests, sessions without instrumentation).
+# ---------------------------------------------------------------------------
+class SessionMetrics:
+    """Thread-safe accumulator for one conversation's quality signals.
+
+    Records STT/TTS call counts, per-call LLM latencies, tool-call counts,
+    turn count and whether the LLM fallback chain was used. `quality_payload`
+    renders the `quality` object for the SessionEnded event, or None when
+    nothing was recorded (guard: no data -> no quality key on the event).
+    """
+
+    def __init__(self, conversation_id: str, *, clock=time.time) -> None:
+        self.conversation_id = conversation_id
+        self._clock = clock
+        self.started_at = clock()
+        self.turn_count = 0
+        self.stt_calls = 0
+        self.tts_calls = 0
+        self.llm_fallback_used = False
+        self._llm_latencies_ms: list[float] = []
+        self._tool_calls: dict[str, int] = {}
+        self._lock = threading.Lock()
+
+    # ------------------------------------------------------------- recording
+    def record_turn(self) -> None:
+        with self._lock:
+            self.turn_count += 1
+
+    def record_stt(self) -> None:
+        with self._lock:
+            self.stt_calls += 1
+
+    def record_tts(self) -> None:
+        with self._lock:
+            self.tts_calls += 1
+
+    def record_tool_call(self, name: str) -> None:
+        with self._lock:
+            self._tool_calls[name] = self._tool_calls.get(name, 0) + 1
+
+    def record_llm_latency(self, seconds: float) -> None:
+        with self._lock:
+            self._llm_latencies_ms.append(seconds * 1000.0)
+
+    def record_llm_fallback(self) -> None:
+        with self._lock:
+            self.llm_fallback_used = True
+
+    # -------------------------------------------------------------- snapshot
+    def tool_calls(self) -> dict[str, int]:
+        with self._lock:
+            return dict(self._tool_calls)
+
+    def has_data(self) -> bool:
+        with self._lock:
+            return bool(
+                self.turn_count
+                or self.stt_calls
+                or self.tts_calls
+                or self._llm_latencies_ms
+                or self._tool_calls
+            )
+
+    def quality_payload(
+        self,
+        *,
+        escalated: bool = False,
+        confirmed_phone: str | None = None,
+    ) -> dict[str, Any] | None:
+        """SessionEnded `quality` object, or None when nothing was recorded.
+
+        Latency fields are null (not 0) when the session made no LLM calls
+        through the instrumented path (e.g. the LiveKit worker's plugin LLM
+        node — only the fallback chain and the chat tool loop time calls).
+        """
+        with self._lock:
+            latencies = list(self._llm_latencies_ms)
+            tools = dict(self._tool_calls)
+            empty = not (
+                self.turn_count or self.stt_calls or self.tts_calls or latencies or tools
+            )
+            duration_s = round(self._clock() - self.started_at, 1)
+            turn_count = self.turn_count
+            stt_calls = self.stt_calls
+            tts_calls = self.tts_calls
+            fallback = self.llm_fallback_used
+        if empty:
+            return None
+        return {
+            "duration_s": duration_s,
+            "turn_count": turn_count,
+            "tool_calls": tools,
+            "avg_llm_latency_ms": (
+                round(sum(latencies) / len(latencies)) if latencies else None
+            ),
+            "max_llm_latency_ms": round(max(latencies)) if latencies else None,
+            "stt_calls": stt_calls,
+            "tts_calls": tts_calls,
+            "llm_fallback_used": fallback,
+            "escalated": escalated,
+            "confirmed_phone": confirmed_phone,
+        }
+
+
+_active_session: contextvars.ContextVar[SessionMetrics | None] = contextvars.ContextVar(
+    "voice_session_metrics", default=None
+)
+
+
+def activate_session(session: SessionMetrics) -> SessionMetrics:
+    """Make `session` the active per-session accumulator for this context.
+
+    Returns the session so callers can keep a direct reference. The binding
+    lives for the rest of the context (a LiveKit job runs exactly one
+    session), so no explicit deactivate is needed; tests can rebind freely.
+    """
+    _active_session.set(session)
+    return session
+
+
+def get_active_session() -> SessionMetrics | None:
+    return _active_session.get()
+
+
+# Recording helpers used at the same call sites as the global registry. All
+# are no-ops when no session is active in this context.
+def session_turn() -> None:
+    if (s := get_active_session()) is not None:
+        s.record_turn()
+
+
+def session_stt() -> None:
+    if (s := get_active_session()) is not None:
+        s.record_stt()
+
+
+def session_tts() -> None:
+    if (s := get_active_session()) is not None:
+        s.record_tts()
+
+
+def session_tool_call(name: str) -> None:
+    if (s := get_active_session()) is not None:
+        s.record_tool_call(name)
+
+
+def session_llm_latency(seconds: float) -> None:
+    if (s := get_active_session()) is not None:
+        s.record_llm_latency(seconds)
+
+
+def session_llm_fallback() -> None:
+    if (s := get_active_session()) is not None:
+        s.record_llm_fallback()

@@ -14,6 +14,30 @@ from typing import Any
 SOURCE = "voice-agent-runtime"
 
 
+def session_lifecycle_data(
+    *,
+    conversation_id: str,
+    channel: str,
+    site_slug: str,
+    quality: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Data payload for SessionStarted/SessionEnded events.
+
+    `quality` (SessionMetrics.quality_payload) is attached to SessionEnded
+    only when the session produced data — the key stays absent otherwise so
+    downstream consumers (crm-sync-service) can tell "no signals" apart from
+    "zero values".
+    """
+    data: dict[str, Any] = {
+        "conversationId": conversation_id,
+        "channel": channel,
+        "siteSlug": site_slug,
+    }
+    if quality:
+        data["quality"] = quality
+    return data
+
+
 def new_cloudevent(
     *,
     type_: str,
