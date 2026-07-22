@@ -103,7 +103,8 @@ func (s *server) activityConfirmBooking(w http.ResponseWriter, r *http.Request) 
 		s.internal(w, err)
 		return
 	}
-	if err := s.d.Store.SetBookingStatus(r.Context(), tenantID, bookingID, store.StatusConfirmed, s.d.Ops.EventsTopic, payload); err != nil {
+	if err := s.d.Store.SetBookingStatus(r.Context(), tenantID, bookingID, store.StatusConfirmed, s.d.Ops.EventsTopic, payload,
+		s.d.Ops.UsageExtra(req.TenantSlug, tenantID, bookingID, offering)...); err != nil {
 		s.mapOpError(w, err)
 		return
 	}

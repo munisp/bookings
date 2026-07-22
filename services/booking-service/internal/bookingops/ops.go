@@ -65,7 +65,10 @@ type Service struct {
 	Store       *store.Store
 	Saga        SagaStarter // may be nil in tests / when Temporal is down
 	EventsTopic string
-	Logger      *zap.Logger
+	// UsageTopic is the Kafka topic for usage-metering records
+	// (opendesk.usage.events, Wave 5 #9). Empty disables metering.
+	UsageTopic string
+	Logger     *zap.Logger
 	// Cache invalidates availability day-bucket keys on every successful
 	// write (create/reschedule/cancel). Nil disables invalidation; both the
 	// REST handlers and the Kafka command consumer share this Service, so
@@ -168,6 +171,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (store.Booking, er
 	}
 
 	booking := store.Booking{
+		ID:             uuid.New(), // assigned up front so events carry the id
 		TenantID:       in.TenantID,
 		OfferingID:     in.OfferingID,
 		TeamMemberID:   in.TeamMemberID,
@@ -182,7 +186,8 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (store.Booking, er
 	if err != nil {
 		return store.Booking{}, err
 	}
-	if err := s.Store.CreateBookingTx(ctx, &booking, s.EventsTopic, payload); err != nil {
+	if err := s.Store.CreateBookingTx(ctx, &booking, s.EventsTopic, payload,
+		s.UsageExtra(in.TenantSlug, booking.TenantID, booking.ID, offering)...); err != nil {
 		if errors.Is(err, store.ErrConflict) && in.IdempotencyKey != "" {
 			// Lost the unique race — the other writer won; return its row.
 			return s.Store.GetBookingByIdempotencyKey(ctx, in.TenantID, in.IdempotencyKey)
