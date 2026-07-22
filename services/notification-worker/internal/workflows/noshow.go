@@ -62,7 +62,10 @@ func NoShowFollowupWorkflow(ctx workflow.Context, in NoShowInput) error {
 	}
 
 	state = "sending-followup"
-	if err := workflow.ExecuteActivity(ctx, ActivitySendNoShowFollow, in).Get(ctx, nil); err != nil {
+	// Outbound send: route through NotifyPaced (CPS token + sender
+	// rotation) like every other workflow-driven notification.
+	req := PacedSendRequest{Kind: PacedSendNoShow, NoShow: &PacedNoShowSend{Input: in}}
+	if err := workflow.ExecuteActivity(ctx, ActivityNotifyPaced, req).Get(ctx, nil); err != nil {
 		logger.Error("no-show follow-up notification failed", "error", err)
 	}
 	state = "done:no-show"
