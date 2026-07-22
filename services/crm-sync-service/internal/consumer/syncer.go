@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/opendesk/crm-sync-service/internal/events"
@@ -125,6 +126,13 @@ func (s *Syncer) handleBookingUpsert(ctx context.Context, d events.BookingData, 
 	personID, err := s.syncPerson(ctx, d, tenantUUID)
 	if err != nil {
 		return err
+	}
+	if personID != "" && d.Phone != "" {
+		// Phone -> person edge: lets the SessionEnded call-quality note path
+		// resolve the caller when the Twenty phone lookup misses.
+		if err := s.Map.Put(ctx, syncmap.KindContactPhone, d.Phone, personID, tenantUUID); err != nil {
+			return err
+		}
 	}
 	if m, err := s.Map.Get(ctx, KindBooking, d.BookingID, tenantUUID); err == nil {
 		// Task already exists: keep it current (confirmed / re-created paths).
@@ -247,6 +255,9 @@ func (s *Syncer) handleBookingRescheduled(ctx context.Context, d events.BookingD
 
 // HandleConversation processes opendesk.conversation.events.
 func (s *Syncer) HandleConversation(ctx context.Context, evt events.CloudEvent) error {
+	if evt.Type == events.TypeSessionEnded {
+		return s.handleSessionEnded(ctx, evt)
+	}
 	switch evt.Type {
 	case events.TypeToolInvoked:
 	default:
@@ -295,6 +306,78 @@ func (s *Syncer) findPersonForNote(ctx context.Context, phone, email string) (st
 		return "", err
 	}
 	return rec.ID, nil
+}
+
+// handleSessionEnded turns an enriched SessionEnded event (call-quality
+// signals from voice-agent-runtime, app/metrics.py SessionMetrics) into a
+// Twenty Note ("📞 AI call summary") on the caller's Person, linked via
+// /rest/noteTargets — the same pattern as the AI-booking note above.
+//
+// Skip+ack (documented) cases — none of these are errors worth a retry:
+//   - the event carries no quality object: the session recorded no signals
+//     (voice-agent-runtime omits the key entirely in that case);
+//   - quality.confirmed_phone is empty: the caller never confirmed a phone
+//     number, so no Person can be resolved and an orphaned note would be
+//     dropped into the tenant's CRM;
+//   - the phone resolves to no Twenty person (lookup + sync_map miss): the
+//     contact was never synced; the note is best-effort.
+func (s *Syncer) handleSessionEnded(ctx context.Context, evt events.CloudEvent) error {
+	d, err := events.DataAs[events.SessionEndedData](evt)
+	if err != nil {
+		return permanent(err)
+	}
+	if d.Quality == nil {
+		s.Log.Debug("SessionEnded without quality; skipping call-summary note",
+			zap.String("conversation_id", d.ConversationID))
+		return nil
+	}
+	phone := strings.TrimSpace(d.Quality.ConfirmedPhone)
+	if phone == "" {
+		s.Log.Debug("SessionEnded without confirmed_phone; skipping call-summary note",
+			zap.String("conversation_id", d.ConversationID))
+		return nil
+	}
+	personID, err := s.resolvePersonForCall(ctx, phone, parseUUID(evt.TenantID))
+	if err != nil {
+		return fmt.Errorf("resolve person for call summary: %w", err)
+	}
+	if personID == "" {
+		s.Log.Info("no Twenty person for confirmed phone; call-summary note skipped",
+			zap.String("conversation_id", d.ConversationID))
+		return nil
+	}
+	noteID, err := s.Twenty.CreateNote(ctx,
+		twentyc.CallSummaryNoteTitle, twentyc.CallSummaryNote(*d.Quality), personID)
+	if err != nil {
+		return fmt.Errorf("create call summary note: %w", err)
+	}
+	s.Log.Info("AI call summary note added",
+		zap.String("person_id", personID),
+		zap.String("note_id", noteID),
+		zap.String("conversation_id", d.ConversationID))
+	return nil
+}
+
+// resolvePersonForCall resolves the caller's Person by confirmed phone:
+// Twenty people lookup first (existing FindPerson), then the sync_map
+// contact_phone mapping written at booking sync (covers phone-format
+// mismatches between the confirmed number and the Twenty record).
+func (s *Syncer) resolvePersonForCall(ctx context.Context, phone string, tenantUUID *uuid.UUID) (string, error) {
+	personID, err := s.findPersonForNote(ctx, phone, "")
+	if err != nil {
+		return "", err
+	}
+	if personID != "" {
+		return personID, nil
+	}
+	m, err := s.Map.Get(ctx, syncmap.KindContactPhone, phone, tenantUUID)
+	if errors.Is(err, syncmap.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return m.TwentyID, nil
 }
 
 func parseUUID(v string) *uuid.UUID {
