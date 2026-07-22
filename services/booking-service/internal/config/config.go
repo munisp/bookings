@@ -33,10 +33,17 @@ type Config struct {
 	PrivacyGroup       string        // consumer group of the privacy erase consumer
 	RedisAddr          string        // REDIS_ADDR for the availability cache (empty = cache disabled)
 	CacheTTL           time.Duration // availability cache entry TTL (CACHE_TTL_SECONDS, default 120s)
+	CacheStaleTTL      time.Duration // serve-stale window after CacheTTL (CACHE_STALE_TTL_SECONDS, default 15min)
+	UsageEventsTopic   string        // opendesk.usage.events (usage metering, Wave 5 #9; empty disables)
+	IdentityCacheTTL   time.Duration // tenant-context resolver cache TTL (TENANT_CACHE_TTL_SECONDS, default 5min)
 	OutboxPollInterval time.Duration // outbox dispatcher poll cadence
 	ShutdownTimeout    time.Duration
-	AuthzDisabled      bool // dev escape hatch: skip Permify checks (AUTHZ_DISABLED=true)
-	ConsumerEnabled    bool // run the Kafka command consumer (default true)
+	AuthzDisabled      bool   // dev escape hatch: skip Permify checks (AUTHZ_DISABLED=true)
+	AuthzOutagePolicy  string // fail_closed (default) | fail_open — behavior when Permify itself errors
+	ConsumerEnabled    bool   // run the Kafka command consumer (default true)
+	// Customer portal (Wave 5 #7)
+	PortalSecret       string // HMAC secret signing 15-min portal JWTs (PORTAL_SECRET)
+	NotificationsTopic string // opendesk.notifications.outbox (SendPortalCode delivery)
 }
 
 // Load reads configuration from the environment.
@@ -64,10 +71,17 @@ func Load() (Config, error) {
 		PrivacyGroup:       envStr("PRIVACY_EVENTS_GROUP", "booking-service-privacy"),
 		RedisAddr:          os.Getenv("REDIS_ADDR"),
 		CacheTTL:           time.Duration(envInt("CACHE_TTL_SECONDS", 120)) * time.Second,
+		CacheStaleTTL:      time.Duration(envInt("CACHE_STALE_TTL_SECONDS", 900)) * time.Second,
+		UsageEventsTopic:   envStr("USAGE_EVENTS_TOPIC", "opendesk.usage.events"),
+		IdentityCacheTTL:   time.Duration(envInt("TENANT_CACHE_TTL_SECONDS", 300)) * time.Second,
 		OutboxPollInterval: time.Duration(envInt("OUTBOX_POLL_INTERVAL_SECONDS", 2)) * time.Second,
 		ShutdownTimeout:    time.Duration(envInt("SHUTDOWN_TIMEOUT_SECONDS", 20)) * time.Second,
 		AuthzDisabled:      envStr("AUTHZ_DISABLED", "false") == "true",
+		AuthzOutagePolicy:  envStr("AUTHZ_OUTAGE_POLICY", "fail_closed"),
 		ConsumerEnabled:    envStr("CONSUMER_ENABLED", "true") == "true",
+		// Dev fallback keeps the portal bootable locally; prod MUST override.
+		PortalSecret:       envStr("PORTAL_SECRET", "opendesk-dev-portal-secret-change-in-prod"),
+		NotificationsTopic: envStr("NOTIFICATIONS_TOPIC", "opendesk.notifications.outbox"),
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, fmt.Errorf("DATABASE_URL is required")

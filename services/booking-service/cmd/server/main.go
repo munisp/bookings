@@ -54,7 +54,7 @@ func run() error {
 	defer st.Close()
 
 	daprClient := daprc.New(cfg.DaprHost, cfg.DaprHTTPPort)
-	resolver := bookingops.NewTenantResolver(daprClient, cfg.IdentityAppID)
+	resolver := bookingops.NewTenantResolver(daprClient, cfg.IdentityAppID, cfg.IdentityCacheTTL, logger)
 
 	// Temporal saga starter — optional at boot: when Temporal is unreachable
 	// the service still accepts bookings (they stay `pending` and the saga
@@ -72,7 +72,7 @@ func run() error {
 	}
 
 	// Availability cache (SPEC-W3 §3) — nil when REDIS_ADDR is unset.
-	availCache := cache.New(cfg.RedisAddr, cfg.CacheTTL, logger)
+	availCache := cache.New(cfg.RedisAddr, cfg.CacheTTL, cfg.CacheStaleTTL, logger)
 	if availCache.Enabled() {
 		defer availCache.Close() //nolint:errcheck
 		logger.Info("availability cache enabled", zap.String("redis_addr", cfg.RedisAddr), zap.Duration("ttl", cfg.CacheTTL))
@@ -82,6 +82,7 @@ func run() error {
 		Store:       st,
 		Saga:        saga,
 		EventsTopic: cfg.BookingEventsTopic,
+		UsageTopic:  cfg.UsageEventsTopic,
 		Logger:      logger,
 		Cache:       availCache,
 	}
@@ -114,16 +115,21 @@ func run() error {
 	}
 
 	deps := httpapi.Deps{
-		Store:         st,
-		Ops:           ops,
-		Resolver:      resolver,
-		Authz:         permify.NewHTTPClient(cfg.PermifyURL),
-		AuthzDisabled: cfg.AuthzDisabled,
-		Dapr:          daprClient,
-		IdentityAppID: cfg.IdentityAppID,
-		Gdpr:          gdpr,
-		Cache:         availCache,
-		Logger:        logger,
+		Store:             st,
+		Ops:               ops,
+		Resolver:          resolver,
+		Authz:             permify.NewHTTPClient(cfg.PermifyURL),
+		AuthzDisabled:     cfg.AuthzDisabled,
+		AuthzOutagePolicy: cfg.AuthzOutagePolicy,
+		Dapr:              daprClient,
+		IdentityAppID:     cfg.IdentityAppID,
+		Gdpr:              gdpr,
+		Cache:             availCache,
+		Logger:            logger,
+
+		PortalSecret:       cfg.PortalSecret,
+		PubSubName:         cfg.PubSubName,
+		NotificationsTopic: cfg.NotificationsTopic,
 	}
 
 	srv := &http.Server{

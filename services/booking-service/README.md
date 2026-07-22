@@ -20,7 +20,8 @@ Dapr invocation); mutating routes check Permify (`manage_catalog` /
 | GET/POST | `/v1/team-members` | POST: `manage_catalog` |
 | GET/PUT/DELETE | `/v1/team-members/{id}` | PUT/DELETE: `manage_catalog` |
 | PUT/GET | `/v1/team-members/{id}/availability` | PUT: `manage_catalog` |
-| GET | `/v1/availability?offering_id&team_member_id&from&to` | — |
+| GET | `/v1/availability?offering_id&team_member_id&from&to[&optimize=true]` | — |
+| GET | `/v1/availability/optimize?offering_id&team_member_id&date=YYYY-MM-DD` — top 3 slots `{starts_at, ends_at, score, reason}` ranked by calendar fragmentation (Wave 5 #4) | — |
 | GET/PUT | `/v1/site` (auto-creates default on first read; slug immutable; theme jsonb) | PUT: `manage_catalog` |
 | GET/POST, GET/PUT/DELETE `/{id}` | `/v1/contacts` | mutations: `manage_bookings` |
 | POST/GET | `/v1/bookings` | POST: `manage_bookings` |
@@ -31,8 +32,33 @@ Public (no auth; the site slug resolves the tenant server-side — tenant-safe
 by construction):
 
 - `GET /public/sites/{slug}/context`
-- `GET /public/sites/{slug}/availability?...`
+- `GET /public/sites/{slug}/availability?...` — `optimize=true` returns every
+  slot annotated with `{score, reason}` (chronological order)
 - `POST /public/sites/{slug}/bookings`
+
+Customer self-service portal (Wave 5 #7 — magic-code login, no account):
+
+- `POST /public/sites/{slug}/portal/request` `{phone|email}` — 6-digit login
+  code. Always 202 (anti-enumeration); rate-limited to 5/hour per contact
+  (in-memory sliding window). The code's SHA-256 hash lands in
+  `portal_tokens` (10-min TTL); the plaintext code is published as a
+  `com.opendesk.notifications.SendPortalCode` CloudEvent to
+  `opendesk.notifications.outbox` (via `pubsub-kafka` — the component scope
+  already covers both `booking` and `notification`, so no Dapr change is
+  needed) and delivered by notification-worker through the smtp/twilio
+  bindings.
+- `POST /public/sites/{slug}/portal/verify` `{phone|email, code}` — 5 wrong
+  codes lock the token (429); success consumes it and returns a 15-minute
+  HS256 portal JWT (`PORTAL_SECRET`; claims `sub`=contact_id, `tid`,
+  `tsl`).
+- `GET /portal/bookings`, `POST /portal/bookings/{id}/reschedule`,
+  `POST /portal/bookings/{id}/cancel` — portal-JWT middleware, contact-scoped
+  (another contact's booking is a 404); reschedule/cancel reuse the exact
+  `bookingops` logic of the staff endpoints (same availability rules and
+  outbox events). APISIX exposes these at `/api/bookings/portal/*` without
+  openid-connect (booking-service verifies the portal JWT itself; the
+  admin-web BFF strips `Authorization`, so browsers may send the token as
+  `X-Portal-Token` instead).
 
 Temporal saga activity callbacks (invoked by notification-worker via Dapr):
 
@@ -80,6 +106,12 @@ Twenty → OpenDesk direction can never loop):
 | `DATABASE_URL` | — (required) | Postgres DSN for the `booking` DB |
 | `PERMIFY_URL` | `http://permify:3476` | Permify HTTP API |
 | `AUTHZ_DISABLED` | `false` | Dev escape hatch: skip Permify checks |
+| `AUTHZ_OUTAGE_POLICY` | `fail_closed` | `fail_closed` (Permify error → 502) or `fail_open` (log CRITICAL + allow; dev only) |
+| `REDIS_ADDR` | — (cache off) | Redis for the availability cache |
+| `CACHE_TTL_SECONDS` | `120` | Availability cache entry TTL |
+| `CACHE_STALE_TTL_SECONDS` | `900` | Serve-stale window beyond the fresh TTL (`X-Cache: stale`) |
+| `TENANT_CACHE_TTL_SECONDS` | `300` | Identity tenant-context cache TTL; stale-served on identity outage |
+| `USAGE_EVENTS_TOPIC` | `opendesk.usage.events` | Usage-metering topic (empty disables metering) |
 | `DAPR_HOST` / `DAPR_HTTP_PORT` | `daprd-booking` / `3500` | daprd sidecar |
 | `DAPR_PUBSUB_NAME` | `pubsub-kafka` | Dapr pubsub component |
 | `BOOKING_EVENTS_TOPIC` | `opendesk.booking.events` | Outbox topic |
@@ -92,6 +124,8 @@ Twenty → OpenDesk direction can never loop):
 | `CONSUMER_ENABLED` | `true` | Run the command consumer |
 | `OUTBOX_POLL_INTERVAL_SECONDS` | `2` | Outbox poll cadence |
 | `SHUTDOWN_TIMEOUT_SECONDS` | `20` | Graceful shutdown budget |
+| `PORTAL_SECRET` | dev fallback | HMAC secret signing 15-min portal JWTs — override in prod |
+| `NOTIFICATIONS_TOPIC` | `opendesk.notifications.outbox` | Topic for `SendPortalCode` delivery |
 
 ## Schema notes
 
@@ -106,6 +140,10 @@ Twenty → OpenDesk direction can never loop):
   `contacts.external_id` (+ index on `(tenant_id, external_id)`) and
   `bookings.crm_notes JSONB DEFAULT '[]'` are added idempotently at startup
   (`ALTER TABLE IF EXISTS ... ADD COLUMN IF NOT EXISTS`).
+- **`portal_tokens`** (`id, tenant_id, contact_id, token_hash, channel,
+  attempts, expires_at, consumed_at, created_at`) backs the customer portal
+  (Wave 5 #7); bootstrapped idempotently at startup with the same RLS
+  `tenant_isolation` policy as `waitlist`.
 
 ## Auth trust boundary
 
