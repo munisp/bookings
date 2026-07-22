@@ -36,9 +36,20 @@ type Store struct {
 }
 
 // New connects to Postgres, verifies connectivity and ensures the `sites`
-// table exists (see package doc).
-func New(ctx context.Context, databaseURL string) (*Store, error) {
-	pool, err := pgxpool.New(ctx, databaseURL)
+// table exists (see package doc). maxConns sizes the pool; <= 0 keeps the
+// pgx default (min(4, NumCPU)). Size for PEAK concurrent calls, not average:
+// docs/runbooks/capacity-planning.md §DB connection pools
+// (peak_calls × peak turns_per_call); a pool sized for average injects dead
+// air mid-call while every dashboard looks green.
+func New(ctx context.Context, databaseURL string, maxConns int32) (*Store, error) {
+	poolCfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse postgres config: %w", err)
+	}
+	if maxConns > 0 {
+		poolCfg.MaxConns = maxConns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
