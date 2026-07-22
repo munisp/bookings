@@ -33,7 +33,8 @@ const (
 	TypeBookingRescheduled = "com.opendesk.booking.BookingRescheduled"
 	TypeBookingCancelled   = "com.opendesk.booking.BookingCancelled"
 
-	TypeToolInvoked = "com.opendesk.conversation.ToolInvoked"
+	TypeToolInvoked  = "com.opendesk.conversation.ToolInvoked"
+	TypeSessionEnded = "com.opendesk.conversation.SessionEnded"
 )
 
 // TenantProvisionedData mirrors identity-service createTenant's payload:
@@ -74,6 +75,36 @@ type ToolInvokedData struct {
 	Tool           string         `json:"tool"`
 	Status         string         `json:"status"`
 	Detail         map[string]any `json:"detail"`
+}
+
+// SessionEndedData mirrors voice-agent-runtime session_lifecycle_data
+// payloads: {"conversationId","channel","siteSlug","quality"?}. The quality
+// key is present only when the session recorded at least one signal.
+type SessionEndedData struct {
+	ConversationID string       `json:"conversationId"`
+	Channel        string       `json:"channel"`
+	SiteSlug       string       `json:"siteSlug"`
+	Quality        *CallQuality `json:"quality"`
+}
+
+// CallQuality mirrors SessionMetrics.quality_payload (app/metrics.py).
+// Latency fields are null when the session made no LLM calls through the
+// instrumented path. AvgSentiment is an OPTIONAL extension: the voice
+// runtime never sends it (sentiment lives in the OpenSearch conversations
+// index, computed by conversation-service); consumers must omit it from the
+// note when nil.
+type CallQuality struct {
+	DurationS       float64        `json:"duration_s"`
+	TurnCount       int            `json:"turn_count"`
+	ToolCalls       map[string]int `json:"tool_calls"`
+	AvgLLMLatencyMs *int           `json:"avg_llm_latency_ms"`
+	MaxLLMLatencyMs *int           `json:"max_llm_latency_ms"`
+	SttCalls        int            `json:"stt_calls"`
+	TtsCalls        int            `json:"tts_calls"`
+	LLMFallbackUsed bool           `json:"llm_fallback_used"`
+	Escalated       bool           `json:"escalated"`
+	ConfirmedPhone  string         `json:"confirmed_phone"`
+	AvgSentiment    *float64       `json:"avg_sentiment,omitempty"`
 }
 
 // Parse unmarshals one Kafka message value into a CloudEvent envelope.
