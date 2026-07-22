@@ -36,6 +36,13 @@ class TenantContext:
     terminology: dict[str, Any] = field(default_factory=dict)
     industry: str = ""  # SPEC-CRM §C: industry pack id (e.g. salon, clinic)
     agent_persona: str = ""  # pack agentPersona, appended to the system prompt
+    # Pack multi-agent crew + plugin tools (SPEC-W3 §4), set by _apply_pack.
+    agents: list[dict[str, Any]] = field(default_factory=list)
+    custom_tools: list[dict[str, Any]] = field(default_factory=list)
+    # Pack `languages: [en, es]` (Wave 5 #3): languages this tenant's
+    # receptionist supports; bounds the whisper auto-language switch
+    # (app/multilang.py). Empty = unconstrained.
+    languages: list[str] = field(default_factory=list)
     offerings: list[dict[str, Any]] = field(default_factory=list)
     team_members: list[dict[str, Any]] = field(default_factory=list)
     knowledge_snippets: list[str] = field(default_factory=list)
@@ -80,6 +87,14 @@ def _apply_pack(ctx: TenantContext, tenant_payload: dict[str, Any]) -> None:
         custom_tools = pack.get("customTools")
         if isinstance(custom_tools, list):
             ctx.custom_tools = [t for t in custom_tools if isinstance(t, dict)]
+        # Wave 5 #3: pack `languages: [en, es]`. Identity (Go) passes packs
+        # through unvalidated, so the voice runtime validates at consumption
+        # (app/multilang.validate_pack_languages): invalid entries drop out
+        # with a warning, never fatal.
+        if "languages" in pack:
+            from .multilang import validate_pack_languages
+
+            ctx.languages = validate_pack_languages(pack.get("languages"))
 
 
 async def fetch_tenant_context(

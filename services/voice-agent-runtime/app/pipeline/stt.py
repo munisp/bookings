@@ -44,6 +44,10 @@ class FasterWhisperSTT:
         self._compute_type = compute_type
         self._model = None
         self._lock = asyncio.Lock()
+        # Wave 5 #3: language whisper auto-detected on the last transcription
+        # (None when the caller forced `language=` or nothing ran yet); the
+        # LiveKit STT bridge forwards it to the per-session MultilangState.
+        self.last_detected_language: str | None = None
 
     def _load_sync(self):
         # Import deferred: ctranslate2 is heavy and optional at import time.
@@ -114,12 +118,17 @@ class FasterWhisperSTT:
             return ""
 
         def _run() -> str:
-            segments, _info = model.transcribe(
+            segments, info = model.transcribe(
                 audio,
                 language=language,
                 beam_size=1,
                 vad_filter=False,  # silero VAD already gates the audio upstream
             )
+            # Only trust auto-detection; a forced language= is not a detection.
+            if language is None:
+                from ..multilang import detect_language_from_info
+
+                self.last_detected_language = detect_language_from_info(info) or None
             return " ".join(seg.text.strip() for seg in segments).strip()
 
         try:
