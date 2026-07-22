@@ -63,7 +63,12 @@ class ChatService:
         )
 
     async def _prepare_turn(
-        self, *, site_slug: str, message: str, conversation_id: str | None
+        self,
+        *,
+        site_slug: str,
+        message: str,
+        conversation_id: str | None,
+        persona_override: str | None = None,
     ) -> tuple[SessionState, ToolLayer, list[dict[str, Any]]]:
         """Shared turn setup for the buffered and SSE streaming chat paths
         (SPEC-W3 §3): session, tenant context, multi-agent routing, tool
@@ -71,6 +76,11 @@ class ChatService:
         """
         session = self._sessions.get_or_create(conversation_id, site_slug)
         ctx = await fetch_tenant_context(self._dapr, self._settings, site_slug)
+
+        # Wave 5 #8 A/B prompt testing: swap the tenant persona for the
+        # eval candidate. Hard-gated by EVAL_PERSONA_OVERRIDE (default off).
+        if persona_override and self._settings.eval_persona_override:
+            ctx.agent_persona = persona_override
 
         # Multi-agent crews (SPEC-W3 §4, innovation 6): score the message
         # against the pack agents' intent keywords. A match swaps the active
@@ -112,6 +122,9 @@ class ChatService:
             conversation_id=session.conversation_id,
             active_agent=active_agent,
             extra_tool_names=[t.name for t in plugin_tools],
+            # Wave 5 #3: honor a previously detected caller language (voice
+            # path sets it via whisper; None keeps the tenant default).
+            language=session.active_language,
         )
         if history and history[0].get("role") == "system":
             history[0] = {"role": "system", "content": system_prompt}
@@ -141,10 +154,18 @@ class ChatService:
         return False
 
     async def handle_message(
-        self, *, site_slug: str, message: str, conversation_id: str | None
+        self,
+        *,
+        site_slug: str,
+        message: str,
+        conversation_id: str | None,
+        persona_override: str | None = None,
     ) -> dict[str, Any]:
         session, tool_layer, history = await self._prepare_turn(
-            site_slug=site_slug, message=message, conversation_id=conversation_id
+            site_slug=site_slug,
+            message=message,
+            conversation_id=conversation_id,
+            persona_override=persona_override,
         )
 
         reply, trace = await run_tool_loop(
@@ -174,7 +195,12 @@ class ChatService:
         }
 
     async def handle_message_stream(
-        self, *, site_slug: str, message: str, conversation_id: str | None
+        self,
+        *,
+        site_slug: str,
+        message: str,
+        conversation_id: str | None,
+        persona_override: str | None = None,
     ):
         """SSE streaming chat (SPEC-W3 §3): async generator of event dicts.
 
@@ -186,7 +212,10 @@ class ChatService:
         handle_message.
         """
         session, tool_layer, history = await self._prepare_turn(
-            site_slug=site_slug, message=message, conversation_id=conversation_id
+            site_slug=site_slug,
+            message=message,
+            conversation_id=conversation_id,
+            persona_override=persona_override,
         )
 
         # VOICE-SCALING §5 async tools (chat path): an immediate {"ack": ...}
@@ -215,6 +244,7 @@ class ChatService:
                         "arguments": event["arguments"],
                     }
                 }
+
             elif kind == "final":
                 reply = event["text"]
                 trace = event["trace"]
