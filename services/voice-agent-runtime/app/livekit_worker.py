@@ -44,7 +44,7 @@ from . import metrics
 from .async_tools import AsyncToolRunner, ToolAckPolicy
 from .config import Settings, load_settings
 from .dapr_client import DaprClient, DaprError
-from .events import new_cloudevent
+from .events import new_cloudevent, session_lifecycle_data
 from .logging import configure_logging, get_logger
 from .pipeline.stt import FasterWhisperSTT
 from .pipeline.tts import PiperTTS
@@ -346,13 +346,24 @@ class ReceptionistFunctions(lk_llm.FunctionContext):
 # Session wiring
 # ---------------------------------------------------------------------------
 async def _publish_lifecycle(
-    dapr: DaprClient, settings: Settings, ctx: TenantContext, type_: str, conversation_id: str
+    dapr: DaprClient,
+    settings: Settings,
+    ctx: TenantContext,
+    type_: str,
+    conversation_id: str,
+    *,
+    quality: dict[str, Any] | None = None,
 ) -> None:
     event = new_cloudevent(
         type_=type_,
         subject=ctx.tenant_slug,
         tenant_uuid=ctx.tenant_id,
-        data={"conversationId": conversation_id, "channel": "voice", "siteSlug": ctx.site_slug},
+        data=session_lifecycle_data(
+            conversation_id=conversation_id,
+            channel="voice",
+            site_slug=ctx.site_slug,
+            quality=quality,
+        ),
     )
     await dapr.publish_best_effort(
         settings.dapr_pubsub, settings.conversation_events_topic, event, kind=type_
@@ -425,13 +436,24 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     log.info("voice session starting", room=room_name, site_slug=site_slug)
 
     try:
-        agent, tenant_ctx, _session = await build_voice_agent(
+        agent, tenant_ctx, session = await build_voice_agent(
             settings, dapr, site_slug, conversation_id
         )
     except DaprError as exc:
         log.error("session bootstrap failed", site_slug=site_slug, error=str(exc))
         await dapr.aclose()
         return
+
+    # Per-session call-quality accumulator: activated BEFORE agent.start so
+    # the pipeline tasks it spawns inherit this context (asyncio tasks copy
+    # the contextvars at creation). The instrumented STT/TTS/LLM/tool call
+    # sites feed it; the SessionEnded event below ships its payload.
+    session_metrics = metrics.activate_session(metrics.SessionMetrics(conversation_id))
+    try:
+        # Turn = one committed user utterance (livekit-agents 0.10.x event).
+        agent.on("user_speech_committed", lambda *_a, **_k: metrics.session_turn())
+    except Exception as exc:  # noqa: BLE001 - event surface may shift; turns stay 0
+        log.warning("turn counting unavailable", error=str(exc)[:200])
 
     await _publish_lifecycle(
         dapr,
@@ -454,6 +476,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         import asyncio
 
         metrics.get_registry().active_sessions.dec()
+        # Attach the call-quality payload (None when the session recorded no
+        # signals -> the event carries no `quality` key at all).
+        quality = session_metrics.quality_payload(
+            escalated=session.escalation_room is not None,
+            confirmed_phone=session.confirmed_phone,
+        )
         asyncio.get_event_loop().create_task(
             _publish_lifecycle(
                 dapr,
@@ -461,6 +489,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 tenant_ctx,
                 "com.opendesk.conversation.SessionEnded",
                 conversation_id,
+                quality=quality,
             )
         )
 
