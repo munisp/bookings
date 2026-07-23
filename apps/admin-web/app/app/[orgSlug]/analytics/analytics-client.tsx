@@ -19,6 +19,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { AnalyticsQueryResult } from "@/lib/types";
+import { KpiDashboard } from "./kpi-dashboard";
 
 const EXAMPLES = [
   "How many bookings did we have per day last week?",
@@ -72,8 +73,10 @@ export function AnalyticsClient({ orgSlug }: { orgSlug: string }) {
     <div className="max-w-5xl">
       <PageHeader
         title="Analytics"
-        description="Ask questions about your bookings, revenue and customers in plain language — answered from the lakehouse gold marts."
+        description="KPIs at a glance, plus plain-language questions over your bookings, revenue and customers — answered from the lakehouse gold marts."
       />
+
+      <KpiDashboard orgSlug={orgSlug} />
 
       <Card>
         <CardHeader>
