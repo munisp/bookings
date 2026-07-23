@@ -218,6 +218,22 @@ upstreams:
         healthy: {http_statuses: [200, 201, 204, 301, 302, 400, 401, 403, 404]}
         unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
 
+  # GeoLibre GIS workbench (SPEC-W8 Part B2) — optional override service
+  # (infra/compose/geolibre.compose.yml). Passive checks only: the container
+  # is not part of the base stack, so active probing would log noise when it
+  # is not running.
+  - id: geolibre
+    type: roundrobin
+    nodes:
+      "geolibre:8085": 1
+    retries: 1
+    timeout: {connect: 5, send: 60, read: 60}
+    checks:
+      passive:
+        type: http
+        healthy: {http_statuses: [200, 201, 204, 301, 302, 400, 401, 403, 404]}
+        unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
+
   - id: web
     type: roundrobin
     nodes:
@@ -643,6 +659,46 @@ routes:
       proxy-rewrite:
         regex_uri:
           - "^/crm/?(.*)"
+          - "/$1"
+      openid-connect:
+        discovery: http://keycloak:8080/realms/opendesk/.well-known/openid-configuration
+        bearer_only: true
+        realm: opendesk
+        client_id: admin-web
+        use_pkce: true
+      limit-count:
+        count: 600
+        time_window: 60
+        rejected_code: 429
+        key: remote_addr
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
+  # ---- GeoLibre GIS workbench (SPEC-W8 Part B2): /gis/* -> geolibre ----
+  # Same jwt (openid-connect bearer_only) + rewrite + limit-count pattern as
+  # the other authenticated service routes; the /gis prefix is stripped so
+  # GeoLibre serves / natively. Optional stack: start via
+  # docker compose -f docker-compose.yml -f infra/compose/geolibre.compose.yml up -d geolibre
+  - id: gis-geolibre
+    uris:
+      - /gis/*
+      - /gis
+    methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+    upstream_id: geolibre
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/gis/?(.*)"
           - "/$1"
       openid-connect:
         discovery: http://keycloak:8080/realms/opendesk/.well-known/openid-configuration
