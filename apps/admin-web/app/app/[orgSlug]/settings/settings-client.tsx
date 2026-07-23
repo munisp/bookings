@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Save } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, MessagesSquare, Save } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { PageHeader } from "@/components/page-header";
 import { ErrorNote } from "@/components/error-note";
@@ -246,10 +247,29 @@ export function SettingsClient({ orgSlug }: { orgSlug: string }) {
             ) : (
               <p className="text-sm text-muted-foreground">
                 {tenant?.industry
-                  ? `Industry "${tenant.industry}" — no pack summary was included in the tenant response.`
+                  ? `Industry “${tenant.industry}” — no pack summary was included in the tenant response.`
                   : "No industry pack is associated with this organisation yet."}
               </p>
             )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <MessagesSquare className="h-4 w-4" /> Channels
+            </CardTitle>
+            <CardDescription>
+              Enable WhatsApp, Telegram and web chat, and generate the
+              messaging-gateway configuration for this organisation.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href={`/app/${orgSlug}/channels`}>
+              <Button variant="outline" size="sm">
+                Open channel settings <ArrowRight className="h-3.5 w-3.5" />
+              </Button>
+            </Link>
           </CardContent>
         </Card>
 
