@@ -35,6 +35,10 @@ const (
 
 	TypeToolInvoked  = "com.opendesk.conversation.ToolInvoked"
 	TypeSessionEnded = "com.opendesk.conversation.SessionEnded"
+	// TypeCallQualityEnriched is published by conversation-service
+	// (app/quality.py, Wave 5 #2) on opendesk.conversation.quality — the
+	// SessionEnded quality payload plus avg per-turn sentiment.
+	TypeCallQualityEnriched = "com.opendesk.conversation.CallQualityEnriched"
 )
 
 // TenantProvisionedData mirrors identity-service createTenant's payload:
@@ -87,11 +91,25 @@ type SessionEndedData struct {
 	Quality        *CallQuality `json:"quality"`
 }
 
+// CallQualityEnrichedData mirrors conversation-service app/quality.py
+// build_enriched_event payloads on opendesk.conversation.quality:
+// {"conversationId","channel","siteSlug","quality","avg_sentiment",
+// "turn_sentiment_count"}. quality.avg_sentiment is also set; the top-level
+// fields exist so consumers need not re-derive them.
+type CallQualityEnrichedData struct {
+	ConversationID    string       `json:"conversationId"`
+	Channel           string       `json:"channel"`
+	SiteSlug          string       `json:"siteSlug"`
+	Quality           *CallQuality `json:"quality"`
+	AvgSentiment      *float64     `json:"avg_sentiment"`
+	TurnSentimentCount int         `json:"turn_sentiment_count"`
+}
+
 // CallQuality mirrors SessionMetrics.quality_payload (app/metrics.py).
 // Latency fields are null when the session made no LLM calls through the
 // instrumented path. AvgSentiment is an OPTIONAL extension: the voice
-// runtime never sends it (sentiment lives in the OpenSearch conversations
-// index, computed by conversation-service); consumers must omit it from the
+// runtime never sends it; conversation-service fills it in on the
+// CallQualityEnriched event (Wave 5 #2). Consumers must omit it from the
 // note when nil.
 type CallQuality struct {
 	DurationS       float64        `json:"duration_s"`

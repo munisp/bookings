@@ -66,6 +66,10 @@ Batched flushes (size/time), explicit offset commits after each flush.
 | `INDEXER_ENABLED` | `true` | Run the indexer task |
 | `INDEXER_GROUP` | `conversation-service-indexer` | Consumer group |
 | `INDEXER_BULK_SIZE` / `INDEXER_BULK_FLUSH_SECONDS` | `100` / `2` | Bulk batching |
+| `QUALITY_ENRICH_ENABLED` | `true` | Run the call-quality sentiment enricher (Wave 5 #2) |
+| `CONVERSATION_EVENTS_TOPIC` | `opendesk.conversation.events` | SessionEnded intake topic |
+| `QUALITY_EVENTS_TOPIC` | `opendesk.conversation.quality` | CallQualityEnriched egress topic |
+| `QUALITY_ENRICH_GROUP` | `conversation-sentiment` | Enricher consumer group |
 
 ## Run
 
@@ -83,6 +87,23 @@ docker build -t opendesk/conversation-service .
   is guarded so the image runs without it (default `kafka` sink).
 - The Dockerfile builds with `pip install .` (core deps only); install the
   `fluvio` extra in a custom image when `TRANSCRIPT_SINK=fluvio`.
+
+## Call-quality sentiment enrichment (Wave 5 #2)
+
+Background task (`app/quality.py`, direct aiokafka like the indexer,
+consumer group `conversation-sentiment`) consuming
+`com.opendesk.conversation.SessionEnded` from
+`opendesk.conversation.events`. When the event carries a `quality` payload
+**and** `quality.confirmed_phone`, it averages the per-turn `sentiment`
+scores of that conversation (turns table, written by app/intel.py) and
+republishes the payload as `com.opendesk.conversation.CallQualityEnriched`
+on the dedicated topic **`opendesk.conversation.quality`** — a separate
+topic on purpose, so the enriched event can never retrigger SessionEnded
+consumers. The enriched data adds `avg_sentiment` + `turn_sentiment_count`
+(and sets `quality.avg_sentiment`). Skips (acked, never retried): no
+quality, no confirmed phone, malformed ids, and conversations with zero
+sentiment-scored turns. crm-sync-service merges this into the Twenty call
+summary note (see its README for the eventual-consistency design).
 
 ## GDPR contact marker + privacy erasure (SPEC-W3 §2, innovation 13)
 

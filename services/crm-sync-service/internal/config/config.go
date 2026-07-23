@@ -25,6 +25,7 @@ type Config struct {
 	IdentityTopic       string // opendesk.identity.events
 	BookingTopic        string // opendesk.booking.events
 	ConversationTopic   string // opendesk.conversation.events
+	QualityTopic        string // opendesk.conversation.quality (CallQualityEnriched, Wave 5 #2)
 	CRMEventsTopic      string // opendesk.crm.events (reverse webhook intake)
 	PrivacyTopic        string // opendesk.privacy.events (GDPR erase tombstones)
 	ConsumerGroup       string // crm-sync
@@ -52,6 +53,7 @@ func Load() (Config, error) {
 		IdentityTopic:       envStr("IDENTITY_EVENTS_TOPIC", "opendesk.identity.events"),
 		BookingTopic:        envStr("BOOKING_EVENTS_TOPIC", "opendesk.booking.events"),
 		ConversationTopic:   envStr("CONVERSATION_EVENTS_TOPIC", "opendesk.conversation.events"),
+		QualityTopic:        envStr("QUALITY_EVENTS_TOPIC", "opendesk.conversation.quality"),
 		CRMEventsTopic:      envStr("CRM_EVENTS_TOPIC", "opendesk.crm.events"),
 		PrivacyTopic:        envStr("PRIVACY_EVENTS_TOPIC", "opendesk.privacy.events"),
 		ConsumerGroup:       envStr("CONSUMER_GROUP", "crm-sync"),
