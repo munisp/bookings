@@ -70,6 +70,10 @@ Batched flushes (size/time), explicit offset commits after each flush.
 | `CONVERSATION_EVENTS_TOPIC` | `opendesk.conversation.events` | SessionEnded intake topic |
 | `QUALITY_EVENTS_TOPIC` | `opendesk.conversation.quality` | CallQualityEnriched egress topic |
 | `QUALITY_ENRICH_GROUP` | `conversation-sentiment` | Enricher consumer group |
+| `RETENTION_ENABLED` | `true` | Run the retention sweeper (NDPA/GDPR storage limitation) |
+| `RETENTION_DAYS` | `365` | Hard-delete turns older than this many days (`180` in the NDPA profile) |
+| `RETENTION_SWEEP_SECONDS` | `3600` | Sweep interval (also runs once at startup) |
+| `RETENTION_BATCH_SIZE` | `1000` | Max turns deleted per batch statement |
 
 ## Run
 
@@ -122,3 +126,27 @@ summary note (see its README for the eventual-consistency design).
   then clears the marker; conversation shells are kept for referential
   integrity. Env: `PRIVACY_ENABLED` (default true), `PRIVACY_EVENTS_TOPIC`,
   `PRIVACY_EVENTS_GROUP`.
+
+## Data retention (NDPA 2023 / GDPR storage limitation)
+
+`app/retention.py` runs a background sweeper (startup + hourly) that
+**hard-deletes turns older than `RETENTION_DAYS`** (default 365; the NDPA
+profile in `infra/privacy/ndpa-profile.env` sets 180 — see
+docs/compliance/ndpa.md):
+
+- Per-tenant batches: tenants are enumerated from the conversations table
+  and each delete runs inside a tenant-scoped transaction
+  (`app.tenant_id` set), so FORCE ROW LEVEL SECURITY confines every batch to
+  its tenant. Enumeration requires a role that bypasses RLS — with the
+  default `opendesk` superuser DSN this works out of the box; under an
+  RLS-enforced role (`app_conversation_login`) the sweep finds no tenants
+  and no-ops, so run retention with the superuser DSN or a maintenance role.
+- The age cutoff is computed with the **database clock** (`now()` in SQL),
+  so app-side clock skew can never extend the retention window.
+- Deletes are batched (`RETENTION_BATCH_SIZE` per statement) to bound lock
+  time; one tenant's failure is logged and does not stop the others.
+- Orthogonal to GDPR/NDPA erasure: the privacy erase consumer deletes a data
+  subject's turns immediately; the sweeper only removes aged rows erasure
+  did not cover. Conversation shells are kept (referential integrity); only
+  turn content is deleted. Indexed copies in OpenSearch are NOT covered —
+  see docs/compliance/ndpa.md for the indexer caveat.
