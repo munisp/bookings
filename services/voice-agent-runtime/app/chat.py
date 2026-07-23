@@ -160,6 +160,7 @@ class ChatService:
         message: str,
         conversation_id: str | None,
         persona_override: str | None = None,
+        channel: str = "web",
     ) -> dict[str, Any]:
         session, tool_layer, history = await self._prepare_turn(
             site_slug=site_slug,
@@ -167,6 +168,9 @@ class ChatService:
             conversation_id=conversation_id,
             persona_override=persona_override,
         )
+        # SPEC-W6 Part A: omnichannel inbound — remember which channel the
+        # message arrived on (session metadata + turn logging only).
+        session.channel = channel
 
         reply, trace = await run_tool_loop(
             self._llm,
@@ -181,6 +185,7 @@ class ChatService:
         log.info(
             "chat turn complete",
             conversation_id=session.conversation_id,
+            channel=session.channel,
             tool_calls=len(trace),
             active_agent=session.active_agent,
             copilot=copilot_posted,

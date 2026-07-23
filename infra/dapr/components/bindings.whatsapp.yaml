@@ -3,6 +3,14 @@
 # WHATSAPP_PHONE_NUMBER_ID, retries and error mapping. Invoke with operation
 # "post" and data {"to": "...", "message": "..."} (free-form text inside the
 # 24h window) or {"to": "...", "template": "<name>"} (template message).
+#
+# NOTE (SPEC-W6 Part A): this binding is OUTBOUND only. Inbound WhatsApp /
+# Telegram webhooks terminate directly on the messaging-gateway HTTP server
+# (GET/POST /webhooks/whatsapp, POST /webhooks/telegram) — Meta/Telegram
+# cannot call Dapr input bindings inbound through APISIX without a public
+# route, so the APISIX `webhooks-messaging` route (/webhooks/* →
+# messaging-gateway:7011) fronts them instead, authenticated by the Meta
+# verify token / Telegram shared secret. See docs/integrations/whatsapp-telegram.md.
 apiVersion: dapr.io/v1alpha1
 kind: Component
 metadata:

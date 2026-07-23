@@ -45,6 +45,15 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
     # SPEC-W3 §3: stream=true switches the response to text/event-stream.
     stream: bool = False
+    # Wave 5 #8 A/B prompt testing: candidate persona for eval/ab_test.py.
+    # Honored ONLY when EVAL_PERSONA_OVERRIDE=true on the server (off by
+    # default — on a public endpoint this would be a prompt-injection hole).
+    persona_override: str | None = None
+    # SPEC-W6 Part A: omnichannel inbound — which channel the message
+    # arrived on ("web" default for existing callers; "whatsapp"/"telegram"
+    # from the messaging-gateway bridge). Additive only; threaded into
+    # session metadata + turn logging, no behavioral change.
+    channel: str = "web"
 
 
 class VoiceSessionResponse(BaseModel):
@@ -155,6 +164,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 site_slug=req.site_slug,
                 message=req.message,
                 conversation_id=req.conversation_id,
+                persona_override=req.persona_override,
+                channel=req.channel,
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("chat failed", site_slug=req.site_slug, error=str(exc))

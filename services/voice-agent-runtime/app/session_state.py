@@ -44,6 +44,13 @@ class SessionState:
     # Warm handoff (SPEC-W3 §4, innovation 1): set once request_human ran;
     # copilot mode posts suggested replies into this room's data channel.
     escalation_room: str | None = None
+    # Multilingual receptionist (Wave 5 #3): the language the caller is
+    # currently speaking (whisper auto-detect, app/multilang.py); None = the
+    # tenant default language applies.
+    active_language: str | None = None
+    # Omnichannel inbound (SPEC-W6 Part A): the channel the current message
+    # arrived on ("web" | "whatsapp" | "telegram"). Metadata only.
+    channel: str = "web"
     created_at: float = field(default_factory=time.time)
     touched_at: float = field(default_factory=time.time)
 
