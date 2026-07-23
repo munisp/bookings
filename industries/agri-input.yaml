@@ -1,0 +1,137 @@
+# Agri-input industry pack (SPEC-W6 Part B) — agri-input dealers and NGO
+# extension programs. Multi-language seeds (en/pcm/ha/yo/ig), NGN/kobo.
+id: agri-input
+displayName: Agri-Input Dealer & Extension Program
+terminology:
+  offering: service
+  team_member: field officer
+  booking: booking
+  contact: farmer
+agentPersona: |
+  You are the front-desk assistant of an agri-input dealership and
+  extension program serving smallholder farmers. You are practical,
+  season-aware and plain-spoken. Many callers speak Hausa, Yoruba, Igbo or
+  Nigerian Pidgin — always mirror the caller's language and register, and
+  keep sentences short for farmers calling from areas with weak network.
+
+  Hard rules (never break these):
+  - NEVER promise yields, harvest sizes or income ("this fertilizer will
+    give you 50 bags") — results depend on weather, soil and practice; say
+    the agronomist will advise on realistic expectations.
+  - NEVER give pesticide safety or mixing instructions beyond what is on
+    the product label — read the label wording only, and always advise
+    protective equipment.
+  - NEVER invent prices or discounts; prices are as listed, in naira.
+
+  What you do: take seasonal input orders (seed, fertilizer, agro-chemicals),
+  book farmers into training and field-demo group sessions, and schedule
+  agronomist call-back slots. Confirm the farmer's phone number and village
+  or LGA for every order. A 20% deposit holds a bulk order; balance is due
+  on pickup or delivery. If network wahala cut the call, offer SMS/USSD
+  follow-up — never penalise a dropped call.
+bookingPolicy:
+  depositPercent: 20
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 72
+temporalWorkflow: ConsultancyFollowupWorkflow
+languages: [en, pcm, ha, yo, ig]
+consentText: |
+  We dey record this call and we go keep your name, phone number, village
+  or LGA and your order or training details so we fit supply your inputs
+  and remind you about trainings. We no dey share your data with anybody
+  outside the program, and we delete call records after 180 days under the
+  Nigeria Data Protection Act 2023. You fit ask us to see, correct or
+  delete your data at any time. If you no want make we record, tell us now.
+offerings:
+- name: Seasonal Input Order (Fertilizer 50kg bag)
+  duration_min: 15
+  buffer_min: 10
+  price_cents: 4500000 # ₦45,000 per bag
+  capacity: 20
+- name: Improved Seed Order (Maize/Rice 10kg)
+  duration_min: 15
+  buffer_min: 10
+  price_cents: 1800000 # ₦18,000 per pack
+  capacity: 20
+- name: Training & Field Demo Session
+  duration_min: 180
+  buffer_min: 30
+  price_cents: 0
+  capacity: 40
+- name: Agronomist Call-Back
+  duration_min: 20
+  buffer_min: 10
+  price_cents: 0
+  capacity: 3
+- name: Bulk Cooperative Order Intake
+  duration_min: 30
+  buffer_min: 15
+  price_cents: 0
+  capacity: 5
+- name: Sprayer & Equipment Rental Booking
+  duration_min: 30
+  buffer_min: 15
+  price_cents: 700000 # ₦7,000 per day
+  capacity: 4
+reminders:
+  offsets: ["72h", "24h"]
+  channels: ["sms"]
+knowledgeSeed:
+- title: Seasonal calendar & input campaigns
+  body: |
+    Input campaigns follow the season: land preparation and seed orders
+    open before the first rains (March–April in the south, May–June in the
+    north), fertilizer top-dressing orders follow 4–6 weeks after planting,
+    and agro-chemical orders peak mid-season. Dry-season (irrigated) orders
+    run October to February. Prices change between seasons with market
+    supply — always confirm the current price from the catalogue before
+    taking an order; never quote last season's price as a promise.
+- title: Language support (en/pcm/ha/yo/ig)
+  body: |
+    Serve callers in the language they use: English, Nigerian Pidgin
+    ("How you dey? Wetin you wan order?"), Hausa ("Sannu! Yaya zan taimaka
+    maka?"), Yoruba ("Ẹ n lẹ o! Kí ló wà tí mo lè ṣe fún yín?") or Igbo
+    ("Ndewo! Kedu ihe m ga-enyere gị aka?"). Keep sentences short, confirm
+    quantities and prices twice, and repeat the total slowly in naira
+    before taking a deposit commitment.
+- title: Safe-use & agronomist escalation
+  body: |
+    Front-desk staff never give mixing ratios, dosage or safety
+    instructions for agro-chemicals beyond reading the product label
+    verbatim, and always remind farmers to use protective equipment and
+    keep chemicals away from children and food. Questions about soil
+    problems, pest identification, fertilizer programmes or expected yields
+    go to an agronomist call-back slot (free, 20 minutes) or a training
+    session.
+- title: Deposits, payment & cooperative orders
+  body: |
+    A 20% deposit holds any order over ₦50,000; balance is paid on pickup
+    or delivery. Payment by bank transfer, OPay, PalmPay or cash at the
+    depot with a receipt. Cooperatives and farmer groups can place bulk
+    orders through the bulk intake slot — one booking per group, with the
+    group leader's confirmed phone number. Deliveries to cluster villages
+    are grouped on market days to reduce cost.
+- title: Training & field demo sessions
+  body: |
+    Free group training and field-demo sessions run at demonstration plots
+    and community halls (capacity 40). Topics rotate with the season:
+    planting technique, fertilizer application, safe agro-chemical use and
+    post-harvest handling. Farmers book individually or through their
+    cooperative; a reminder SMS goes out 72 hours and 24 hours before each
+    session.
+dashboardLabels:
+  bookingSingular: Booking
+  bookingPlural: Bookings
+  customerTerm: Farmer
+agents:
+- id: agronomist-desk
+  name: Agronomist Desk
+  persona: |
+    You are the agronomist desk coordinator. You handle questions about
+    soil, pests, fertilizer programmes and input selection by booking an
+    agronomist call-back or a training session — you never promise yields
+    and never give chemical mixing or dosage instructions beyond the label.
+    Mirror the caller's language (English, Pidgin, Hausa, Yoruba or Igbo).
+  intents: [fertilizer, seed, seeds, pest, pests, soil, spray, chemical, herbicide, insecticide, yield, planting, agronomist, training, demo]

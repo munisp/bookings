@@ -1,0 +1,143 @@
+# Logistics industry pack (SPEC-W6 Part B) — logistics companies and
+# dispatch riders. COD confirmations, pickup/delivery slots, rider KYC
+# onboarding, failed-delivery rescheduling. NGN/kobo, NDPA consent.
+id: logistics
+displayName: Logistics & Dispatch
+terminology:
+  offering: service
+  team_member: rider
+  booking: slot
+  contact: customer
+agentPersona: |
+  You are the dispatch coordinator of a Nigerian logistics and dispatch
+  company. You are brisk, clear and reliable — customers want to know where
+  their parcel is and when it will arrive. Mirror the caller's register:
+  Nigerian Pidgin if they speak Pidgin ("Your package dey move, no wahala"),
+  polite standard English if they are formal.
+
+  Hard rules (never break these):
+  - NEVER confirm a cash-on-delivery (COD) amount or change a delivery
+    address without verifying the caller with the tracking number and the
+    phone number on the booking.
+  - NEVER promise exact delivery times — give the confirmed slot window
+    only; traffic and weather are real, so say so honestly.
+  - NEVER take card details, PINs or OTPs on a call. COD is paid to the
+    rider by cash or transfer on delivery, with a receipt.
+  - For lost, damaged or disputed parcels, log the complaint with the
+    tracking number and escalate to the operations team — never guess
+    compensation amounts.
+
+  What you do: make COD confirmation calls, book pickup and delivery slots,
+  take rider KYC onboarding intake, and reschedule failed deliveries.
+  Always confirm the tracking number and the customer's phone number before
+  changing a booking. Quote delivery fees in naira format like ₦3,500.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 4
+temporalWorkflow: SupportEscalationWorkflow
+languages: [en, pcm]
+consentText: |
+  We dey record this call and we go keep your name, phone number, delivery
+  address and tracking details so we fit deliver your parcel and confirm
+  your COD order. We no dey share your data with anybody outside the
+  delivery, and we delete call records after 180 days under the Nigeria
+  Data Protection Act 2023. You fit ask us to see, correct or delete your
+  data at any time. If you no want make we record, tell us now.
+offerings:
+- name: COD Confirmation Call
+  duration_min: 5
+  buffer_min: 5
+  price_cents: 0
+  capacity: 8
+- name: Pickup Slot (Within City)
+  duration_min: 30
+  buffer_min: 15
+  price_cents: 150000 # ₦1,500
+  capacity: 6
+- name: Same-Day Delivery Slot
+  duration_min: 60
+  buffer_min: 15
+  price_cents: 350000 # ₦3,500
+  capacity: 4
+- name: Rider KYC Onboarding Intake
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 0
+  capacity: 2
+- name: Failed-Delivery Rescheduling
+  duration_min: 10
+  buffer_min: 5
+  price_cents: 0
+  capacity: 6
+- name: Inter-State Waybill Booking
+  duration_min: 20
+  buffer_min: 10
+  price_cents: 500000 # ₦5,000
+  capacity: 4
+reminders:
+  offsets: ["24h", "1h"]
+  channels: ["sms"]
+knowledgeSeed:
+- title: COD (cash-on-delivery) confirmation
+  body: |
+    Every COD order is confirmed by call before dispatch: the coordinator
+    reads the order summary, confirms the COD amount in naira and the
+    delivery address, and the customer confirms availability in the slot
+    window. Unconfirmed COD orders are NOT dispatched. The customer pays
+    the rider by cash or transfer on delivery and collects a receipt —
+    riders never ask for card details, PINs or OTPs. Address changes after
+    confirmation require the tracking number plus the phone number on the
+    booking.
+- title: Delivery windows & SLA
+  body: |
+    Within-city pickups run in 2-hour windows (9:00–11:00, 12:00–14:00,
+    15:00–17:00, WAT) Monday to Saturday. Same-day delivery is guaranteed
+    for pickups confirmed before 12:00; otherwise it moves to the next
+    window. Inter-state waybills leave the depot daily at 16:00 and arrive
+    in 1–3 days depending on the route. Failed deliveries are re-attempted
+    once the next day for free; a third attempt attracts a ₦1,000 redelivery
+    fee. Traffic, rain and security diversions can delay windows — the
+    coordinator gives the honest updated window, never an invented time.
+- title: Rider KYC onboarding
+  body: |
+    New dispatch riders complete a KYC intake: full name, phone, address,
+    next of kin (name and phone), guarantor (name, phone, address), valid
+    ID (national ID, voter's card or driver's license), rider's card, and
+    vehicle papers with plate number. Riders bring the originals to the
+    intake appointment. Onboarding is free — the company never collects a
+    "registration fee" by transfer; anyone asking for one is a fraudster.
+- title: Failed deliveries & complaints
+  body: |
+    A delivery fails when the customer is unreachable at the address or the
+    phone is off; the rider waits 10 minutes and calls twice before marking
+    it failed. Failed deliveries are rescheduled free once. Lost, damaged
+    or disputed parcels are logged with the tracking number and escalated
+    to the operations team, which responds within 48 hours — the
+    coordinator never guesses compensation or blames the customer.
+dashboardLabels:
+  bookingSingular: Slot
+  bookingPlural: Slots
+  customerTerm: Customer
+agents:
+- id: dispatch-coordinator
+  name: Dispatch Coordinator
+  persona: |
+    You are the dispatch coordinator for live deliveries. You confirm COD
+    orders (amount in naira, address, slot window), track parcels by
+    tracking number, reschedule failed deliveries, and give honest delivery
+    windows — never exact promises. You verify the caller with tracking
+    number plus phone number before changing anything, and you escalate
+    lost or damaged parcels to operations without guessing compensation.
+  intents: [delivery, deliver, pickup, parcel, package, tracking, track, cod, "cash on delivery", rider, dispatch, failed, reschedule, waybill]
+- id: rider-onboarding-officer
+  name: Rider Onboarding Officer
+  persona: |
+    You are the rider onboarding officer. You take KYC intake for new
+    dispatch riders: personal details, next of kin, guarantor, valid ID,
+    rider's card and vehicle papers, and you book the intake appointment
+    where originals are verified. You explain that onboarding is free and
+    no "registration fee" is ever collected by transfer.
+  intents: [rider, kyc, onboarding, register, registration, guarantor, "rider's card", vehicle, bike, job, work, apply]

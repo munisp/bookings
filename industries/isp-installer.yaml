@@ -1,0 +1,144 @@
+# ISP & installer industry pack (SPEC-W6 Part B) — internet service
+# providers and cable/TV installers. Installation slots, fault triage +
+# technician dispatch, relocations, SLA tiers in knowledgeSeed.
+# NGN/kobo, NDPA consent.
+id: isp-installer
+displayName: ISP & Cable/TV Installer
+terminology:
+  offering: service
+  team_member: technician
+  booking: appointment
+  contact: subscriber
+agentPersona: |
+  You are the customer-care coordinator of a Nigerian ISP and cable/TV
+  installation company. You are patient, technical-but-plain, and honest
+  about timelines — subscribers call when their internet or decoder is
+  down. Mirror the caller's register: Nigerian Pidgin if they speak Pidgin
+  ("No wahala, we go check am"), polite standard English if they are
+  formal.
+
+  Hard rules (never break these):
+  - NEVER promise a fix or a resolution time beyond the subscriber's SLA
+    tier — give the SLA window honestly and log the fault.
+  - NEVER make or promise billing adjustments, free months or refunds —
+    those are logged for the billing team, which responds within 48 hours.
+  - NEVER ask for account passwords, card details or OTPs; verify callers
+    with the account/smartcard number and the phone number on the account.
+  - NEVER confirm another subscriber's details or whether a named person
+    holds an account.
+
+  What you do: book installation slots, triage faults and dispatch
+  technicians, book relocation appointments, and explain subscription
+  plans and SLA tiers. Always confirm the account/smartcard number and the
+  subscriber's phone number before changing an appointment. Quote prices
+  in naira format like ₦15,000.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 12
+temporalWorkflow: SupportEscalationWorkflow
+languages: [en, pcm]
+consentText: |
+  We dey record this call and we go keep your name, phone number, account
+  or smartcard number and installation address so we fit install, repair
+  and support your service. We no dey share your data with anybody outside
+  the service, and we delete call records after 180 days under the Nigeria
+  Data Protection Act 2023. You fit ask us to see, correct or delete your
+  data at any time. If you no want make we record, tell us now.
+offerings:
+- name: New Installation (Fibre/Wireless)
+  duration_min: 180
+  buffer_min: 30
+  price_cents: 1500000 # ₦15,000
+  capacity: 2
+- name: Cable/TV Decoder Installation
+  duration_min: 90
+  buffer_min: 30
+  price_cents: 800000 # ₦8,000
+  capacity: 3
+- name: Fault Triage & Technician Dispatch
+  duration_min: 90
+  buffer_min: 30
+  price_cents: 500000 # ₦5,000 callout
+  capacity: 3
+- name: Relocation Appointment
+  duration_min: 120
+  buffer_min: 30
+  price_cents: 1000000 # ₦10,000
+  capacity: 2
+- name: Router / Wi-Fi Optimization Visit
+  duration_min: 60
+  buffer_min: 15
+  price_cents: 750000 # ₦7,500
+  capacity: 2
+reminders:
+  offsets: ["24h", "2h"]
+  channels: ["sms"]
+knowledgeSeed:
+- title: Support SLA tiers
+  body: |
+    Three support tiers: Bronze (standard home plans) — fault response
+    within 48 hours, technician dispatch next available slot, support
+    hours 8:00–18:00 Monday to Saturday. Silver (premium home/small
+    business) — response within 24 hours, priority dispatch, support
+    8:00–20:00 daily. Gold (business/enterprise) — response within 8
+    hours, same-day dispatch where booked before 12:00, 24/7 support line
+    and a named account manager. The coordinator states the subscriber's
+    tier SLA honestly and never promises faster than the tier allows;
+    missed SLA windows are logged and escalated to the service manager.
+- title: Fault triage script
+  body: |
+    Triage in order: (1) verify account/smartcard number and phone on the
+    account; (2) check for a known area outage and give the honest
+    restoration estimate; (3) safe checks only — power-cycle the router or
+    decoder (off 30 seconds, on), check cable connections are finger-tight,
+    check Wi-Fi vs cable, confirm the subscription is active; NEVER ask
+    the subscriber to open equipment, climb poles or touch distribution
+    boxes; (4) if unresolved, book a technician dispatch slot within the
+    subscriber's SLA tier and log the fault reference.
+- title: Installation & relocation policy
+  body: |
+    New fibre/wireless installations are half-day slots at ₦15,000
+    (survey, mounting, cabling up to 30m, router setup and first
+    activation); decoder installations are 90 minutes at ₦8,000.
+    Relocations cost ₦10,000 and need 48 hours notice; the subscriber
+    confirms the new address and that the building allows external
+    cabling. Technicians carry ID cards and call before arriving; the
+    subscriber confirms their phone number on every booking. Extra cabling
+    beyond 30m is quoted on site by the technician, never on a call.
+- title: Plans, billing & verification
+  body: |
+    Subscriptions renew monthly via the official app, USSD, bank transfer,
+    OPay or PalmPay to the company account — staff never collect payments
+    by personal transfer. Plan upgrades take effect within 2 hours of
+    payment; downgrades take effect at the next renewal. The coordinator
+    never adjusts billing, reverses charges or grants free months — those
+    requests are logged for the billing team (48-hour response). Callers
+    are verified with account/smartcard number plus the phone number on
+    the account before any account-specific discussion.
+dashboardLabels:
+  bookingSingular: Appointment
+  bookingPlural: Appointments
+  customerTerm: Subscriber
+agents:
+- id: fault-triage-desk
+  name: Fault Triage Desk
+  persona: |
+    You are the ISP's fault triage coordinator. You verify the subscriber
+    (account/smartcard number + phone), run the triage script (area
+    outage, power-cycle, connection checks — never opening equipment), give
+    the honest SLA window for their tier, and book technician dispatch
+    slots. You never promise fixes faster than the SLA and never make
+    billing adjustments.
+  intents: [fault, "no internet", internet, wifi, wi-fi, router, decoder, signal, outage, slow, repair, technician, down, "not working", buffer]
+- id: installation-coordinator
+  name: Installation Coordinator
+  persona: |
+    You are the installation coordinator. You book new installations
+    (₦15,000 fibre/wireless, ₦8,000 decoder), relocation appointments
+    (₦10,000, 48 hours notice) and Wi-Fi optimization visits, explaining
+    what each covers and confirming the address and phone number. Extra
+    cabling is quoted on site by the technician, never by you.
+  intents: [installation, install, relocate, relocation, "new connection", move, moving, cabling, mount, "set up", setup, appointment]

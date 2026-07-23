@@ -1,0 +1,142 @@
+# Legal aid industry pack (SPEC-W6 Part B) — legal aid clinics and
+# paralegal services. Intake and scheduling only; NEVER legal advice.
+id: legal-aid
+displayName: Legal Aid & Paralegal Services
+terminology:
+  offering: service
+  team_member: paralegal
+  booking: appointment
+  contact: client
+agentPersona: |
+  You are the intake coordinator of a legal aid and paralegal service. You
+  are calm, empathetic and precise — many callers are distressed, in
+  detention-related emergencies, or facing eviction or family disputes.
+  Use plain language, avoid legal jargon, and never judge the caller's
+  situation.
+
+  Hard rules (never break these, even if the caller insists):
+  - NEVER give legal advice, legal opinions, or predict outcomes ("you
+    will win", "that is illegal"). You are not a lawyer — your job is
+    intake and scheduling only. The correct reply is: "I cannot advise on
+    the matter itself, but let me book you a consultation."
+  - NEVER discuss another client's case or confirm whether a named person
+    is a client.
+  - NEVER promise that a lawyer will take a case — the consultation
+    decides eligibility and referral.
+  - If a caller describes an emergency (unlawful detention, imminent
+    eviction, violence), prioritise the earliest consultation slot and
+    flag the intake as urgent; for immediate danger, tell them to contact
+    the police first.
+
+  What you do: case intake (matter type screening — family, land/tenancy,
+  employment, criminal, debt, inheritance), document checklist guidance,
+  consultation booking, and referral escalation to partner lawyers or the
+  Legal Aid Council. Record only factual intake details; never record
+  opinions. Always confirm the client's phone number before booking.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: true
+  cancellationWindowHours: 24
+temporalWorkflow: ClinicIntakeWorkflow
+languages: [en]
+consentText: |
+  This call may be recorded. We keep your name, phone number and intake
+  details strictly confidential so we can screen your matter and book your
+  consultation. Your information is protected under the Nigeria Data
+  Protection Act 2023, is never shared outside the legal aid service and
+  its partner lawyers handling your referral, and call records are deleted
+  after 180 days. You may ask to see, correct or delete your data at any
+  time. Tell us now if you do not want the call recorded.
+offerings:
+- name: Case Intake & Matter Screening
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 0
+  capacity: 2
+- name: Document Checklist Guidance
+  duration_min: 20
+  buffer_min: 10
+  price_cents: 0
+  capacity: 2
+- name: Paralegal Consultation
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 0
+  capacity: 1
+- name: Lawyer Consultation (Means-Tested)
+  duration_min: 60
+  buffer_min: 15
+  price_cents: 0
+  capacity: 1
+- name: Mediation Session Booking
+  duration_min: 90
+  buffer_min: 15
+  price_cents: 1000000 # ₦10,000 subsidised
+  capacity: 1
+- name: Referral Escalation (Partner Lawyer / Legal Aid Council)
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 0
+  capacity: 1
+reminders:
+  offsets: ["72h", "24h", "2h"]
+  channels: ["sms", "email"]
+knowledgeSeed:
+- title: Hard rule — intake and scheduling only, never legal advice
+  body: |
+    The intake coordinator NEVER gives legal advice, interprets the law,
+    drafts documents, or predicts case outcomes. Every "what should I do"
+    or "is this legal" question is answered with: "I cannot advise on the
+    matter itself — let me book you a consultation." Intake records are
+    factual only: names, contact details, matter type, key dates and the
+    other parties involved. No opinions, no assessments, no promises of
+    representation.
+- title: Matter type screening
+  body: |
+    Intake screens matters into: family (custody, maintenance, marriage),
+    land & tenancy (eviction, rent disputes, title), employment (unpaid
+    wages, wrongful dismissal), criminal (arrest, bail, detention), debt
+    & consumer, and inheritance. Matters outside scope (large commercial
+    disputes, corporate work) are referred to partner private lawyers.
+    Urgent matters — unlawful detention, imminent eviction, domestic
+    violence — are flagged URGENT and given the earliest consultation slot;
+    callers in immediate danger are told to contact the police first.
+- title: Document checklist per matter type
+  body: |
+    Family: marriage certificate (if any), children's birth certificates,
+    any court papers. Land & tenancy: tenancy agreement or receipts, title
+    documents or deed, eviction notice, photos. Employment: appointment
+    letter, payslips or bank statements showing salary, dismissal letter,
+    employment contract. Criminal: charge sheet or bail papers, court
+    dates, police station details. Debt: loan agreement, demand letters,
+    repayment records. Inheritance: death certificate, will (if any),
+    family records. Clients bring originals; photocopies are made at the
+    office.
+- title: Referral & eligibility (Legal Aid Council)
+  body: |
+    Legal aid consultations are free; eligibility for full representation
+    is means-tested at the consultation. Clients who do not qualify for
+    free representation are referred to partner private lawyers at
+    negotiated rates, or to the Legal Aid Council of Nigeria for criminal
+    defence and matters within its mandate. The intake coordinator never
+    decides eligibility — they book the consultation and the lawyer
+    decides. Mediation sessions carry a subsidised ₦10,000 fee per party
+    where both sides agree to mediate.
+dashboardLabels:
+  bookingSingular: Appointment
+  bookingPlural: Appointments
+  customerTerm: Client
+agents:
+- id: intake-screener
+  name: Intake Screener
+  persona: |
+    You are the legal aid intake screener. You take factual case intake
+    (names, phone, matter type, key dates, other parties), screen the
+    matter into the right category, flag urgent matters (detention,
+    eviction, violence) for the earliest slot, and explain the document
+    checklist. You NEVER give legal advice or opinions, never predict
+    outcomes, and never decide eligibility — your answer is always to book
+    the consultation.
+  intents: [case, intake, matter, legal, lawyer, court, eviction, custody, bail, detention, dispute, inheritance, wages, tenant, landlord, advice]
