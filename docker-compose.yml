@@ -165,6 +165,10 @@ services:
       OUTBOUND_BURST: ${OUTBOUND_BURST:-3}
       PACER_BACKEND: ${PACER_BACKEND:-redis}
       OUTBOUND_FROM_NUMBERS: ${OUTBOUND_FROM_NUMBERS:-}
+      # Messaging channel routing (docs/integrations/messaging-channels.md):
+      # per-tenant provider selection for sms/email sends.
+      MESSAGING_CHANNELS: ${MESSAGING_CHANNELS:-email:smtp,sms:twilio}
+      TENANT_CHANNEL_MAP: ${TENANT_CHANNEL_MAP:-}
     volumes:
     - ./industries:/industries:ro
     ports:
@@ -175,6 +179,28 @@ services:
     - temporal
     - kafka
     - redis
+  messaging-gateway:
+    build: ./services/messaging-gateway
+    # Nigeria messaging channel (Termii / Africa's Talking / WhatsApp Cloud
+    # API). Reached through the Dapr HTTP bindings bindings-termii /
+    # bindings-africastalking / bindings-whatsapp, which are scoped to the
+    # notification sidecar — no daprd sidecar needed here.
+    env_file:
+    - path: .env
+      required: false
+    environment:
+      PORT: '7011'
+      TERMII_API_KEY: ${TERMII_API_KEY:-}
+      TERMII_SENDER_ID: ${TERMII_SENDER_ID:-OpenDesk}
+      AT_API_KEY: ${AT_API_KEY:-}
+      AT_USERNAME: ${AT_USERNAME:-}
+      AT_FROM: ${AT_FROM:-}
+      WHATSAPP_TOKEN: ${WHATSAPP_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+    ports:
+    - 7011:7011
+    networks:
+    - opendesk
   daprd-notification:
     image: daprio/daprd:1.14.4
     command: *id001
@@ -274,6 +300,8 @@ services:
       LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
       LLM_API_KEY: ${LLM_API_KEY:-ollama}
       WHISPER_MODEL: ${WHISPER_MODEL:-base}
+      # Voiceprints are biometric data — NDPA profile keeps them off.
+      VOICEPRINTS: ${VOICEPRINTS:-off}
     ports:
     - 7006:7006
     networks:
@@ -318,6 +346,10 @@ services:
       PG_DATABASE: conversation
       FLUVIO_ADDR: fluvio:9003
       TRANSCRIPT_SINK: ${TRANSCRIPT_SINK:-kafka}
+      # Retention + intel toggles (NDPA profile: infra/privacy/ndpa-profile.env).
+      RETENTION_ENABLED: ${RETENTION_ENABLED:-true}
+      RETENTION_DAYS: ${RETENTION_DAYS:-365}
+      INTEL_LLM: ${INTEL_LLM:-off}
     ports:
     - 7007:7007
     networks:
