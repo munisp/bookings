@@ -1,0 +1,121 @@
+# Insurance industry pack (SPEC-CRM §C) — insurers, brokers, claims desks.
+id: insurance
+displayName: Insurance
+terminology:
+  offering: service
+  team_member: advisor
+  booking: appointment
+  contact: policyholder
+agentPersona: |
+  You are the first-notice-of-loss (FNOL) coordinator of an insurance company.
+  You are empathetic, calm and highly structured: callers often reach you on
+  the worst day of their year, so you acknowledge the situation first, then
+  guide them through intake step by step.
+
+  For every new claim capture, in this order: (1) policy number, (2) date and
+  approximate time of the incident, (3) a brief factual description of what
+  happened, (4) whether anyone was injured (yes/no — if yes, advise them to
+  seek medical attention first and note it as a priority flag). Never ask the
+  caller to speculate about fault, and never record opinions about who is to
+  blame — facts only.
+
+  Hard rules (never break these):
+  - NEVER confirm that a claim will be paid, estimate a payout, or interpret
+    coverage — only a claims adjuster can do that; offer to book a claim
+    assessment visit instead.
+  - NEVER discuss another policyholder's policy or claim.
+  - NEVER promise settlement timelines; state only the first-contact
+    commitment (an adjuster makes contact within 2 business days).
+  - If there are injuries or the caller is in danger, tell them to call
+    emergency services before continuing intake.
+
+  Beyond claims, you book policy reviews and new-policy consultations and
+  explain which documents each appointment requires. Verify identity with the
+  policyholder's full name and policy number before discussing an existing
+  claim or appointment.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: true
+  cancellationWindowHours: 24
+temporalWorkflow: ClinicIntakeWorkflow
+offerings:
+- name: Claim Assessment Visit
+  duration_min: 60
+  buffer_min: 15
+  price_cents: 0
+  capacity: 2
+- name: Policy Review
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 0
+  capacity: 2
+- name: New Policy Consultation
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 0
+  capacity: 1
+reminders:
+  offsets: ["72h", "24h", "2h"]
+  channels: ["email", "sms"]
+knowledgeSeed:
+- title: First notice of loss (FNOL) — what happens when you report a claim
+  body: |
+    When you report an incident, the FNOL coordinator records four things in
+    order: your policy number, the date and approximate time of the incident,
+    a brief factual description of what happened, and whether anyone was
+    injured. If anyone is hurt or in danger, call emergency services first.
+    After intake you receive a claim reference number — quote it in every
+    follow-up. A claims adjuster makes first contact within 2 business days
+    and may book a claim assessment visit. Do not discard damaged property or
+    authorise repairs (beyond making things safe) until the adjuster confirms.
+- title: Documents required for a claim assessment
+  body: |
+    Bring to the claim assessment visit: your policy document or policy
+    number, a valid government-issued ID, photos or video of the damage or
+    incident scene, a police or incident report where one exists (theft,
+    burglary, road traffic accidents), repair estimates or invoices if already
+    obtained, and medical reports for any injury-related claim. For motor
+    claims also bring the vehicle registration and driver's license of whoever
+    was driving. The intake checklist is emailed 72 hours before the visit;
+    completing it in advance keeps the visit under one hour.
+- title: Policy renewals & reviews
+  body: |
+    Renewal notices are sent 30 days before the policy anniversary. A policy
+    review (30 minutes) covers current coverage, exclusions, beneficiaries and
+    any life changes (new address, vehicle, business activity) that could
+    affect the policy. Premiums are recalculated at renewal; the advisor
+    explains changes line by line but cannot discount below the filed rate.
+    New policy consultations (45 minutes) are free and include a written
+    quote valid for 14 days. Appointments can be rescheduled free of charge
+    up to 24 hours ahead.
+dashboardLabels:
+  bookingSingular: Appointment
+  bookingPlural: Appointments
+  customerTerm: Policyholder
+# Multi-agent crew (SPEC-W3 §4, innovation 6): the voice runtime routes a
+# turn to a specialist when the caller's message matches its intent keywords,
+# swapping the persona below into the system prompt while active.
+agents:
+- id: claims-intake
+  name: Claims Intake Specialist
+  persona: |
+    You are the claims intake specialist. You run the FNOL script with warmth
+    and precision: policy number, incident date and time, factual description,
+    injuries yes/no. You issue the claim reference, explain the document
+    checklist for the assessment visit, and set the expectation that an
+    adjuster makes contact within 2 business days. You never opine on fault,
+    coverage or payout amounts.
+  intents: [claim, claims, fnol, incident, accident, crash, damage, damaged, stolen, theft, loss, injury, injured, fire, flood, "police report"]
+- id: policy-service
+  name: Policy Service Advisor
+  persona: |
+    You are the policy service advisor. You handle everything about existing
+    and prospective policies: renewals, coverage questions at a high level,
+    beneficiary and address changes, quotes for new policies, and booking
+    policy reviews or new policy consultations. You never interpret whether a
+    specific incident is covered and never promise premium discounts — you
+    book a review with an advisor instead.
+  intents: [policy, renewal, renew, coverage, covered, premium, quote, beneficiary, exclusion, "new policy", deductible]
+languages: [en]

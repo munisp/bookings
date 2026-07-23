@@ -1,0 +1,113 @@
+# Travel & hospitality industry pack (SPEC-CRM §C) — tour operators,
+# shuttle services and hotel concierge desks.
+id: travel
+displayName: Travel & Hospitality
+terminology:
+  offering: experience
+  team_member: concierge
+  booking: reservation
+  contact: guest
+agentPersona: |
+  You are the concierge of a travel and hospitality company. You are warm,
+  enthusiastic and unflappable — travel plans change constantly and guests
+  may be stressed, jet-lagged or calling mid-journey. You know every
+  experience by heart: shuttle routes and pickup points, tour itineraries and
+  durations, what is included, and what guests should bring.
+
+  When booking a shuttle or airport pickup, always capture the flight number
+  and arrival time, the number of passengers and the luggage count, and check
+  the flight status before confirming pickup timing. City tours run in all
+  weather except official safety warnings; guests are told the meeting point
+  and the guide's name in the confirmation. Travel consultations are always
+  free and never carry a booking obligation.
+
+  Hard rules (never break these):
+  - NEVER guarantee a flight outcome (delays, connections, rebooking) — only
+    the airline can confirm that; you share the checked flight status and
+    adjust the pickup reservation accordingly.
+  - NEVER invent prices, discounts or availability: quote only from the
+    current catalog and check real availability before confirming.
+  - After every consultation or completed experience the guest receives a
+    follow-up email; mention it so it never reads as spam.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 48
+temporalWorkflow: ConsultancyFollowupWorkflow
+offerings:
+- name: Airport Shuttle
+  duration_min: 30
+  buffer_min: 15
+  price_cents: 2500
+  capacity: 8
+- name: City Tour
+  duration_min: 240
+  buffer_min: 30
+  price_cents: 6900
+  capacity: 15
+- name: Hotel Airport Pickup
+  duration_min: 30
+  buffer_min: 15
+  price_cents: 3500
+  capacity: 3
+- name: Travel Consultation
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 0
+  capacity: 1
+reminders:
+  offsets: ["24h", "3h"]
+  channels: ["email", "sms"]
+knowledgeSeed:
+- title: Airport shuttle & hotel pickup — routes, timing, flight tracking
+  body: |
+    The shared airport shuttle runs between the airport and the city hotel
+    district every hour on the half hour, 05:30 to 23:30, seats 8 and should
+    be booked at least 3 hours ahead. The hotel airport pickup is a private
+    car (up to 3 guests with standard luggage). For both, provide the flight
+    number at booking: the concierge checks live flight status and adjusts
+    pickup timing for delays at no charge. The driver waits up to 60 minutes
+    after actual landing for pickups. Child seats are free but must be
+    requested at booking time.
+- title: City tour — itinerary & what to bring
+  body: |
+    The city tour is a 4-hour guided small-group experience (maximum 15
+    guests) covering the old town, the market quarter, the riverside and two
+    museum entrances (tickets included). It departs daily at 09:00 and 14:00
+    from the fountain in the central square; the confirmation email names the
+    guide and meeting point. Tours run in all weather except official safety
+    warnings — bring comfortable shoes, water and sun protection. The route
+    is step-free; mention wheelchair use when booking so the guide can plan
+    museum lift access.
+- title: Booking, cancellation & follow-up policy
+  body: |
+    Reservations are confirmed instantly by email and SMS. Cancellations and
+    reschedules are free up to 48 hours before the experience; inside that
+    window the full price is charged for tours and pickups. Travel
+    consultations are always free and carry no obligation to book. After
+    every consultation or completed experience, guests receive a follow-up
+    email with notes and next steps, and bespoke itineraries follow within
+    seven days.
+dashboardLabels:
+  bookingSingular: Reservation
+  bookingPlural: Reservations
+  customerTerm: Guest
+# Plugin tools MVP (SPEC-W3 §4, innovation 15): declarative HTTP tools the
+# voice runtime registers in its tool layer. {{var}} placeholders are filled
+# from tool-call arguments (and the session context vars site_slug,
+# tenant_slug, tenant_id); the host must pass the runtime's
+# PLUGIN_ALLOWED_HOSTS SSRF allowlist (default booking,knowledge,identity).
+#
+# DEMO ADAPTER: check_flight_status currently points at the gateway-edge
+# health endpoint as a stand-in that always answers. Replace the url with the
+# Amadeus flight-status plugin endpoint (plugin-amadeus, allowlisted via
+# PLUGIN_ALLOWED_HOSTS) when that plugin lands. GET carries no body, so
+# bodyTemplate is intentionally omitted (the pack validator requires it to be
+# a string when present).
+customTools:
+- name: check_flight_status
+  description: Check flight status (demo adapter) for a flight number and date before confirming airport pickup timing.
+  method: GET
+  url: http://gateway-edge:7005/healthz

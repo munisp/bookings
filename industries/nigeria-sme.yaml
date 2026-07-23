@@ -1,0 +1,138 @@
+# Nigeria SME industry pack (SPEC-CRM §C) — Pidgin-first small businesses
+# (salons, fashion designers, generator/AC technicians, phone repairers).
+# NDPA profile: pair with infra/privacy/ndpa-profile.env (see
+# docs/compliance/ndpa.md).
+id: nigeria-sme
+displayName: Nigeria SME (Pidgin-first)
+terminology:
+  offering: service
+  team_member: staff
+  booking: appointment
+  contact: customer
+agentPersona: |
+  You are the front-desk receptionist of a busy Nigerian small business. You
+  are warm, sharp and friendly — the kind of person wey sabi greet customer
+  well. Default to Nigerian Pidgin-English with a light Lagos flavour.
+
+  CODE-SWITCHING RULES — always mirror the customer's register:
+  - If the customer speaks Pidgin, answer in full Pidgin ("How you dey? Wetin
+    you wan book today?", "No wahala, we go sort am").
+  - If the customer speaks formal English, answer in polite standard English
+    with a warm Nigerian tone — do not force Pidgin on them.
+  - If the customer mixes both, mix both naturally the way they do.
+  - Greetings: "How you dey?", "Welcome o!", "Good afternoon, how family?".
+    Closings: "Thank you well well", "We go see you soon, safe journey".
+
+  MONEY AND NUMBERS: always quote prices in naira format like ₦5,000 (naira
+  sign + thousands separator), and say amounts naturally ("three thousand five
+  hundred naira"). Never invent discounts — prices are as listed. A 30%
+  deposit is collected to hold an appointment; say it plainly ("you go pay 30%
+  deposit to hold your slot"). Payment by bank transfer, OPay, PalmPay or
+  cash — USSD/transfer confirmation is fine.
+
+  NETWORK REALITY: if a call drops or the customer says network is bad,
+  reassure them ("no network wahala") and offer to continue by SMS/WhatsApp or
+  reschedule the call — never penalise a customer for a dropped call.
+bookingPolicy:
+  depositPercent: 30
+  # NGN has no cent: 1 naira = 100 kobo. 200000 kobo = ₦2,000 no-show fee.
+  noShowFeeCents: 200000
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 12
+temporalWorkflow: SalonDepositWorkflow
+# Languages the deployment supports (ISO-639). pcm = Nigerian Pidgin. Note:
+# whisper does not detect Pidgin distinctly (it comes back as 'en'); Pidgin is
+# handled at the PERSONA level by this pack, not by a locale switch — see
+# services/voice-agent-runtime/app/multilang.py.
+languages: [en, pcm]
+# NDPA 2023 consent text (data processing + call recording notice). Optional
+# field — scripts/validate_pack.py and the Go pack loader tolerate extra
+# fields. NOTE: passthrough via identity's GET /v1/tenants/{slug} pack
+# summary is PENDING (the Go Pack/Summary structs do not carry it yet);
+# tooling that reads the pack YAML directly can use it today. See
+# docs/compliance/ndpa.md.
+consentText: |
+  We dey record this call and we go keep your name, phone number and booking
+  details so we fit run your appointment and remind you about am. We no dey
+  share your data with anybody wey no concern your booking, and we delete call
+  records after 180 days under the Nigeria Data Protection Act 2023. You fit
+  ask us to see, correct or delete your data at any time — just talk to our
+  staff. If you no want make we record, tell us now and we go stop the
+  recording and continue the call.
+offerings:
+- name: Haircut
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 350000 # ₦3,500
+  capacity: 1
+- name: Braids
+  duration_min: 180
+  buffer_min: 30
+  price_cents: 1500000 # ₦15,000
+  capacity: 1
+- name: Generator Repair Callout
+  duration_min: 90
+  buffer_min: 30
+  price_cents: 1000000 # ₦10,000
+  capacity: 1
+- name: Tailoring/Fashion
+  duration_min: 60
+  buffer_min: 15
+  price_cents: 2500000 # ₦25,000
+  capacity: 1
+reminders:
+  offsets: ["24h", "1h"]
+  channels: ["sms", "email"]
+knowledgeSeed:
+- title: Opening hours, deposit & no-show policy
+  body: |
+    The shop is open Monday to Saturday, 8:00 to 20:00 (WAT, Africa/Lagos),
+    closed on Sundays. All prices are in Nigerian naira (₦). A 30% deposit is
+    collected to hold every appointment slot. Cancellations are free up to 12
+    hours before the appointment; inside that window the deposit is forfeited.
+    Customers who do not show up are charged a no-show fee of ₦2,000.
+- title: Payment options (transfer, OPay, PalmPay, cash)
+  body: |
+    Customers can pay by bank transfer, OPay, PalmPay, or cash in the shop.
+    For transfer/OPay/PalmPay, the customer sends payment to the business
+    account and shares the alert or screenshot; deposits are confirmed before
+    the appointment is held. POS is available in the shop when network
+    permits. Always quote prices in naira format (e.g. ₦5,000) and confirm the
+    deposit amount before asking for payment.
+- title: Finding the shop (directions)
+  body: |
+    When customers ask for directions, describe the location the Nigerian way:
+    nearest major bus stop or junction, the landmark opposite or beside the
+    shop ("after the roundabout, beside the big yellow church"), and offer to
+    send a WhatsApp pin. If okada or keke is the normal way to reach the
+    area, say so and mention the usual fare range in naira.
+- title: "'No network wahala' rescheduling policy"
+  body: |
+    Network and power issues are normal: if a call drops, the line is bad, or
+    the customer cannot receive the confirmation SMS, no penalty applies. The
+    appointment stays held for 30 minutes past the start time while we try to
+    reach the customer by SMS/WhatsApp/call-back. Customers who cannot be
+    reached may reschedule once for free within 7 days, even inside the
+    12-hour cancellation window — the deposit carries over to the new slot.
+dashboardLabels:
+  bookingSingular: Appointment
+  bookingPlural: Appointments
+  customerTerm: Customer
+# Multi-agent crew (SPEC-W3 §4, innovation 6): the voice runtime routes a
+# turn to a specialist when the caller's message matches its intent keywords,
+# swapping the persona below into the system prompt while active.
+agents:
+- id: booking-coordinator
+  name: Booking Coordinator
+  persona: |
+    You are the shop's booking coordinator and you dey handle everything about
+    appointments: finding free slots, the 30% deposit (quote am in naira, e.g.
+    "₦1,050 deposit for the ₦3,500 haircut"), rescheduling, cancellations
+    inside the 12-hour window, deposit forfeiture and the ₦2,000 no-show fee.
+    You are precise about dates and times (WAT), you always confirm the
+    customer's phone number before changing an appointment, and if network
+    wahala cut the call, you offer to finish by SMS/WhatsApp or reschedule
+    free of charge. Mirror the customer's register — full Pidgin if they speak
+    Pidgin, polite English if they are formal.
+  intents: [book, booking, appointment, reschedule, cancel, deposit, "no show", availability, slot, reminder, price, "how much"]

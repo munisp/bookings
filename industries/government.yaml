@@ -1,0 +1,108 @@
+# Government services industry pack (SPEC-CRM §C) — citizen service centres.
+id: government
+displayName: Government Services
+terminology:
+  offering: service
+  team_member: officer
+  booking: appointment
+  contact: citizen
+agentPersona: |
+  You are the front-desk coordinator of a government citizen service centre.
+  You are formal, patient and you speak in plain language: no jargon, no
+  abbreviations without explanation, and short sentences. Assume every caller
+  may have limited literacy, limited connectivity or a disability — offer to
+  repeat information, spell reference numbers, and describe accessibility
+  options (step-free access, sign-language interpretation on request, priority
+  seating) without being asked twice.
+
+  Hard rules (never break these):
+  - NEVER request, accept or hint at any payment beyond the official published
+    fee schedule. There are NO unofficial fees, "express" payments or
+    gratuities — not ever. If a caller says an officer asked them for extra
+    money, tell them clearly that this is not permitted, that no other
+    payments are required, and give them the official complaint channel.
+  - NEVER promise that an application will be approved or give a guaranteed
+    processing date; state only the published standard processing times.
+  - NEVER discuss one citizen's application with another person, including
+    family members, without the applicant's written consent.
+  - NEVER ask for passwords, bank card PINs or one-time passcodes. Official
+    fees are paid only at the cashier desk or the official payment portal,
+    never to an individual.
+
+  What you do: book, reschedule and cancel appointments; read out the exact
+  document list for each service; state the official fee for each service and
+  always add that no other payments are required; and explain standard
+  processing times. Verify identity with full name and date of birth before
+  changing an existing appointment.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: true
+  cancellationWindowHours: 24
+temporalWorkflow: ClinicIntakeWorkflow
+offerings:
+- name: Passport Appointment
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 0
+  capacity: 4
+- name: National ID Enrollment
+  duration_min: 20
+  buffer_min: 10
+  price_cents: 0
+  capacity: 6
+- name: Driver's License
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 0
+  capacity: 4
+- name: Land Registry Consultation
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 0
+  capacity: 2
+reminders:
+  offsets: ["72h", "24h"]
+  channels: ["email", "sms"]
+knowledgeSeed:
+- title: Required documents per service
+  body: |
+    Passport appointment: completed application form, birth certificate or
+    national ID, two passport photographs (white background), and the old
+    passport for renewals. National ID enrollment: birth certificate or
+    attestation letter, and proof of address. Driver's license (new or
+    renewal): national ID, passport photograph, and the learner's permit or
+    old license; first-time applicants also bring the driving school
+    certificate. Land registry consultation: the survey plan or deed of
+    assignment, a valid ID, and any purchase receipts. Photocopies are made
+    free of charge at the centre — originals are always required for sighting.
+- title: Official fee schedule — no other payments are required
+  body: |
+    All fees are set by the published official schedule and are payable only
+    at the cashier desk or the official payment portal — never to an
+    individual officer, and never in cash outside the cashier desk. Passport
+    (32-page, 5-year): standard official fee as published on the portal.
+    National ID enrollment: free of charge. Driver's license (3-year or
+    5-year): standard official fee as published on the portal. Land registry
+    search and consultation: standard official fee as published on the portal.
+    There are NO express fees, NO facilitation fees and NO gratuities. No
+    other payments are required for any service. If anyone asks you for an
+    additional payment, refuse and report it to the complaints desk or the
+    published anti-corruption hotline — reports can be made anonymously.
+- title: Office hours, accessibility & processing times
+  body: |
+    The centre is open Monday to Friday, 8:00 to 16:00, except public
+    holidays. All services are by appointment; the document checklist is sent
+    72 hours ahead and completing it in advance keeps visits short. The
+    building has step-free access, accessible restrooms, priority seating for
+    elderly, pregnant and disabled visitors, and sign-language interpretation
+    on request (mention it when booking). Standard processing times: passport
+    6 weeks from biometrics capture, national ID card 4 weeks from enrollment,
+    driver's license 2 weeks from capture, land registry search 10 working
+    days. Processing times are standard estimates, not guarantees.
+dashboardLabels:
+  bookingSingular: Appointment
+  bookingPlural: Appointments
+  customerTerm: Citizen
+languages: [en, pcm]

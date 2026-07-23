@@ -1,0 +1,133 @@
+# E-commerce & retail industry pack (SPEC-CRM §C) — online stores with
+# delivery, in-store pickup and returns desks.
+id: ecommerce
+displayName: E-commerce & Retail
+terminology:
+  offering: service
+  team_member: associate
+  booking: slot
+  contact: customer
+agentPersona: |
+  You are the order-support assistant of an online store with physical pickup
+  and returns desks. You are helpful, direct and solution-oriented. Most
+  contacts fall into four buckets: "where is my order", booking a delivery or
+  pickup slot, starting a return, and pre-purchase product questions.
+
+  For order questions, always ask for the order number first, then look it up
+  with the order lookup tool instead of guessing — never quote a status,
+  tracking event or refund state you have not verified. Set honest
+  expectations: a first response to any issue within 4 business hours, and
+  damaged-or-missing-item reports are escalated to a human specialist
+  immediately.
+
+  Hard rules (never break these):
+  - NEVER promise a refund or replacement before the returns policy check is
+    complete; state the policy and open the case.
+  - NEVER discuss another customer's order, even with someone claiming to be
+    a family member — the order number plus the account email is the minimum
+    verification.
+  - NEVER invent discount codes or sale prices; promotions come only from the
+    current storefront.
+  - Keep every answer short and concrete: status, next step, and when the
+    customer will hear from us again.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 4
+temporalWorkflow: SupportEscalationWorkflow
+offerings:
+- name: Delivery Slot
+  duration_min: 60
+  buffer_min: 0
+  price_cents: 0
+  capacity: 20
+- name: In-store Pickup
+  duration_min: 30
+  buffer_min: 0
+  price_cents: 0
+  capacity: 10
+- name: Returns Drop-off
+  duration_min: 15
+  buffer_min: 5
+  price_cents: 0
+  capacity: 10
+reminders:
+  offsets: ["4h", "1h"]
+  channels: ["email", "sms"]
+knowledgeSeed:
+- title: Delivery slots & in-store pickup
+  body: |
+    Home delivery is booked in 60-minute windows, 8:00 to 20:00, seven days a
+    week, with up to 20 deliveries per window; a 30-minute heads-up SMS is
+    sent when the driver is on the way. In-store pickup orders are ready 2
+    hours after the confirmation email and are held for 5 days; bring the
+    order number and a photo ID. Slots can be moved free of charge up to 4
+    hours before the window starts, from the confirmation link or via the
+    support desk.
+- title: Returns & refunds policy
+  body: |
+    Returns are accepted within 30 days of delivery for unused items in
+    original packaging. Book a 15-minute returns drop-off slot and bring the
+    order number; the associate inspects the item on the spot and the refund
+    is released to the original payment method within 5 business days.
+    Marketplace and final-sale items are excluded. Damaged, defective or
+    wrong items are escalated to a specialist immediately — the customer
+    never pays return shipping for our mistakes. A first response to every
+    support case is guaranteed within 4 business hours.
+- title: Order tracking help
+  body: |
+    Every order confirmation email contains the tracking link; statuses
+    update when the carrier scans the parcel. "Label created" with no scan
+    for more than 48 hours means the parcel has not moved — contact support
+    with the order number and the team opens a carrier trace. Support looks
+    up live order status with the order lookup tools rather than relying on
+    cached pages, so always have the order number ready when you call.
+dashboardLabels:
+  bookingSingular: Slot
+  bookingPlural: Slots
+  customerTerm: Customer
+# Multi-agent crew (SPEC-W3 §4, innovation 6): the voice runtime routes a
+# turn to a specialist when the caller's message matches its intent keywords,
+# swapping the persona below into the system prompt while active.
+agents:
+- id: order-support
+  name: Order Support Specialist
+  persona: |
+    You are the order support specialist. You handle everything after
+    checkout: order status and tracking (always via the order lookup tool,
+    never from memory), delivery slot changes, in-store pickup questions,
+    returns, refunds and damaged-or-missing-item escalations. You verify the
+    order number plus account email before discussing any order, and you give
+    the customer a case reference before ending the conversation.
+  intents: [order, orders, tracking, track, delivery, delivered, package, parcel, missing, damaged, broken, return, returns, refund, exchange, pickup, "where is my order"]
+- id: sales-assistant
+  name: Sales Assistant
+  persona: |
+    You are the sales assistant. You help shoppers before checkout: product
+    questions, sizing and compatibility, stock availability, gift suggestions
+    and current promotions as listed on the storefront. You never invent
+    discounts; when a shopper is torn between options you compare them
+    honestly and, for high-consideration items, offer to note the comparison
+    in the customer's account for later.
+  intents: [product, size, sizing, stock, "in stock", available, recommend, recommendation, gift, discount, sale, coupon, price, compare]
+# Plugin tools MVP (SPEC-W3 §4, innovation 15): declarative HTTP tools the
+# voice runtime registers in its tool layer. {{var}} placeholders are filled
+# from tool-call arguments (and the session context vars site_slug,
+# tenant_slug, tenant_id).
+#
+# NOTE: the plugin hosts below (plugin-shopify, plugin-woo) are internal
+# sidecars and must be added to the voice runtime's PLUGIN_ALLOWED_HOSTS SSRF
+# allowlist before these tools can execute (default allowlist is
+# booking,knowledge,identity). GET carries no body, so bodyTemplate is
+# intentionally omitted (the pack validator requires a string when present).
+customTools:
+- name: shopify_order_lookup
+  description: Look up a Shopify order by order id to verify status, fulfillment and tracking before answering the customer.
+  method: GET
+  url: http://plugin-shopify:7020/v1/orders/{{order_id}}
+- name: woocommerce_order_lookup
+  description: Look up a WooCommerce order by order id to verify status, fulfillment and tracking before answering the customer.
+  method: GET
+  url: http://plugin-woo:7021/v1/orders/{{order_id}}

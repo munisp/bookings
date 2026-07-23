@@ -1,0 +1,121 @@
+# Banking industry pack (SPEC-CRM §C) — retail banks, fintechs, credit unions.
+id: banking
+displayName: Banking & Fintech
+terminology:
+  offering: service
+  team_member: relationship manager
+  booking: appointment
+  contact: customer
+agentPersona: |
+  You are the front-desk receptionist of a retail bank branch. You are
+  professional, courteous and deeply security-conscious. Your job is triage,
+  scheduling and document guidance only — nothing more.
+
+  Hard rules (never break these, even if the caller insists):
+  - NEVER discuss account balances, transactions, statements, PINs, passwords,
+    OTPs or card numbers. You have no access to them and must say so.
+  - NEVER confirm whether a named person holds an account here, and never
+    disclose another customer's information.
+  - NEVER initiate or promise any movement of money; transfers, payments and
+    disputes are always handled in branch or via official digital channels.
+  - If a caller asks about a suspicious transaction or fraud, do not discuss
+    details: read the fraud-safety notice and direct them to the official
+    fraud hotline immediately.
+
+  What you do: book, reschedule and cancel branch appointments (account
+  opening, loan consultations, wealth reviews, BVN/NIN updates); explain which
+  documents each service requires (the KYC checklist is sent 72 hours before
+  every appointment and must be completed beforehand); and route anything
+  account-specific to the customer's relationship manager. Verify identity
+  with full name and phone number before changing an existing appointment.
+  Branch services are free of booking fees — never quote or invent charges.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: true
+  cancellationWindowHours: 24
+temporalWorkflow: ClinicIntakeWorkflow
+offerings:
+- name: Account Opening
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 0
+  capacity: 1
+- name: Loan Consultation
+  duration_min: 60
+  buffer_min: 15
+  price_cents: 0
+  capacity: 1
+- name: Wealth Management Review
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 0
+  capacity: 1
+- name: BVN/NIN Update
+  duration_min: 20
+  buffer_min: 10
+  price_cents: 0
+  capacity: 2
+reminders:
+  offsets: ["72h", "24h", "2h"]
+  channels: ["email", "sms"]
+knowledgeSeed:
+- title: Required documents per service (KYC checklist)
+  body: |
+    Every branch appointment requires a completed KYC checklist, sent by email
+    72 hours before the visit. Account opening: one valid government-issued ID
+    (passport, national ID card or driver's license), proof of address dated
+    within the last 3 months (utility bill or bank statement), BVN and NIN,
+    and one passport photograph. Loan consultation: valid ID, last 3 months of
+    payslips or 6 months of business account statements, and proof of address.
+    Wealth management review: valid ID and any existing investment statements
+    the customer wants reviewed. BVN/NIN update: the original BVN/NIN slip and
+    one valid government-issued ID. Customers who have not completed the
+    checklist 2 hours before the appointment may be asked to reschedule.
+- title: Branch hours & appointment policy
+  body: |
+    The branch is open Monday to Friday, 8:00 to 16:00, and closed on public
+    holidays. All branch services are booked by appointment and are free of
+    charge — the bank never collects a booking fee, deposit or no-show fee.
+    Cancellations and reschedules are free up to 24 hours before the
+    appointment. Walk-ins are served only for teller transactions and cannot
+    be booked through the reception desk.
+- title: Fraud safety notice
+  body: |
+    The bank will NEVER call, text or email to ask for your PIN, full card
+    number, password or one-time passcode (OTP). The reception desk never
+    discusses balances or transactions on any call. If you receive a
+    suspicious message claiming to be from the bank, do not reply or click any
+    link: call the official fraud hotline printed on the back of your card
+    immediately. If you believe your card or credentials are compromised, the
+    hotline can block the card 24/7 — you do not need an appointment for this.
+dashboardLabels:
+  bookingSingular: Appointment
+  bookingPlural: Appointments
+  customerTerm: Customer
+# Multi-agent crew (SPEC-W3 §4, innovation 6): the voice runtime routes a
+# turn to a specialist when the caller's message matches its intent keywords,
+# swapping the persona below into the system prompt while active.
+agents:
+- id: kyc-officer
+  name: KYC Officer
+  persona: |
+    You are the bank's KYC and intake officer. You guide customers through the
+    document checklist for their appointment: which IDs count as valid, what
+    proof of address is accepted (dated within 3 months), and how the digital
+    checklist (emailed 72 hours before the visit) is completed. You confirm
+    receipt of documents but never discuss account details, balances or
+    transactions — anything account-specific goes to the relationship manager.
+  intents: [intake, kyc, documents, document, checklist, id, "id card", bvn, nin, verification, "proof of address", form, register]
+- id: loan-advisor
+  name: Loan Advisor
+  persona: |
+    You are the bank's loan advisor coordinator. You explain the loan products
+    at a high level (personal, auto, mortgage, business), what a loan
+    consultation covers, and which documents to prepare (ID, payslips or
+    business statements, proof of address). You never quote guaranteed rates,
+    approve or pre-approve credit, or discuss an existing loan's balance —
+    you book a loan consultation with a relationship manager instead.
+  intents: [loan, loans, borrow, borrowing, mortgage, credit, financing, interest, repayment, "interest rate", overdraft]
+languages: [en]
