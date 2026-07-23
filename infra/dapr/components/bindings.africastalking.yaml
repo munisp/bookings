@@ -1,0 +1,16 @@
+# Africa's Talking SMS output binding (Nigeria channel) — HTTP binding onto
+# the messaging-gateway service, which owns AT_API_KEY/AT_USERNAME, retries
+# and error mapping. Invoke with operation "post" and data
+# {"to": "...", "message": "..."}.
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: bindings-africastalking
+spec:
+  type: bindings.http
+  version: v1
+  metadata:
+    - name: url
+      value: "http://messaging-gateway:7011/v1/africastalking/sms"
+scopes:
+  - notification

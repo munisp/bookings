@@ -1,0 +1,17 @@
+# WhatsApp Cloud API output binding (Nigeria channel) — HTTP binding onto
+# the messaging-gateway service, which owns WHATSAPP_TOKEN /
+# WHATSAPP_PHONE_NUMBER_ID, retries and error mapping. Invoke with operation
+# "post" and data {"to": "...", "message": "..."} (free-form text inside the
+# 24h window) or {"to": "...", "template": "<name>"} (template message).
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: bindings-whatsapp
+spec:
+  type: bindings.http
+  version: v1
+  metadata:
+    - name: url
+      value: "http://messaging-gateway:7011/v1/whatsapp/send"
+scopes:
+  - notification

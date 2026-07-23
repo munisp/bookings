@@ -27,6 +27,9 @@ type Config struct {
 	IndustriesDir      string // mounted industry packs dir (INDUSTRIES_DIR, default /industries)
 	SMTPBinding        string // Dapr output binding for email (bindings-smtp)
 	TwilioBinding      string // Dapr output binding for SMS (bindings-twilio)
+	// Messaging channel routing (docs/integrations/messaging-channels.md).
+	MessagingChannels string // MESSAGING_CHANNELS: "email:smtp,sms:twilio"
+	TenantChannelMap  string // TENANT_CHANNEL_MAP: per-tenant provider JSON
 	SMTPFrom           string // sender address
 	TwilioFrom         string // sender phone number
 	OpenSearchURL      string // used by the tenant onboarding search-alias activity
@@ -77,6 +80,8 @@ func Load() Config {
 		IndustriesDir:            envStr("INDUSTRIES_DIR", "/industries"),
 		SMTPBinding:              envStr("SMTP_BINDING", "bindings-smtp"),
 		TwilioBinding:            envStr("TWILIO_BINDING", "bindings-twilio"),
+		MessagingChannels:        envStr("MESSAGING_CHANNELS", "email:smtp,sms:twilio"),
+		TenantChannelMap:         os.Getenv("TENANT_CHANNEL_MAP"),
 		SMTPFrom:                 envStr("SMTP_FROM", "no-reply@opendesk.local"),
 		TwilioFrom:               envStr("TWILIO_FROM", "+10000000000"),
 		OpenSearchURL:            envStr("OPENSEARCH_URL", "http://opensearch:9200"),
