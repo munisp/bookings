@@ -30,5 +30,10 @@ create_tenant acme-shop     "Acme Online Store"     ecommerce   "Europe/London" 
 create_tenant acme-health   "Acme Specialist Hospital" healthcare "Africa/Lagos" "NGN" "en-NG"
 create_tenant acme-agro     "Acme Agro Cooperative"   agriculture "Africa/Lagos"  "NGN" "en-NG"
 create_tenant acme-fashion  "Acme Fashion House"      fashion     "Africa/Lagos"  "NGN" "en-NG"
+# Wave 6: developing-country vertical demos (SPEC-W6 Part B). All
+# Africa/Lagos, NGN; pack prices are kobo-denominated.
+create_tenant acme-mfb      "Acme Microfinance Cooperative" microfinance "Africa/Lagos" "NGN" "en-NG"
+create_tenant acme-pharm    "Acme Pharmacy & Stores"        pharmacy     "Africa/Lagos" "NGN" "en-NG"
+create_tenant acme-logistics "Acme Express Logistics"       logistics    "Africa/Lagos" "NGN" "en-NG"
 
 echo "Seed complete. Industry packs are applied asynchronously by the TenantOnboardingWorkflow."

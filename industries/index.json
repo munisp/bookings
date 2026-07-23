@@ -2,6 +2,14 @@
   "schemaVersion": 1,
   "packs": [
     {
+      "id": "agri-input",
+      "version": "1.0.0",
+      "sha256": "ab229564d289dd9eebfc3f075815f86efe467c91e2294c01ed4e196f9c63766f",
+      "author": "opendesk",
+      "signature": null,
+      "path": "agri-input.yaml"
+    },
+    {
       "id": "agriculture",
       "version": "1.0.0",
       "sha256": "a67fba8f40ebb55462f111b6ba8c19caedc4e2081787e4f3843054db93359d92",
@@ -90,12 +98,68 @@
       "path": "insurance.yaml"
     },
     {
+      "id": "isp-installer",
+      "version": "1.0.0",
+      "sha256": "3cc90039a3b22b4494af9bc782f66db68b87e509b697b818f34e9877cb1f3d01",
+      "author": "opendesk",
+      "signature": null,
+      "path": "isp-installer.yaml"
+    },
+    {
+      "id": "legal-aid",
+      "version": "1.0.0",
+      "sha256": "57c13d3563fc9fef5f13bd7fc4590e10da1525e89c734a0f40f261ff59dc1d12",
+      "author": "opendesk",
+      "signature": null,
+      "path": "legal-aid.yaml"
+    },
+    {
+      "id": "logistics",
+      "version": "1.0.0",
+      "sha256": "145ea76a6ad3b9073401e46fef523b70653dcbcfcd9e4252dc9c3f638b16ace0",
+      "author": "opendesk",
+      "signature": null,
+      "path": "logistics.yaml"
+    },
+    {
+      "id": "microfinance",
+      "version": "1.0.0",
+      "sha256": "0ef068b910b3d6ac6cd667b0a13d7c2dddca424472e9132188c0a0397d09e520",
+      "author": "opendesk",
+      "signature": null,
+      "path": "microfinance.yaml"
+    },
+    {
       "id": "nigeria-sme",
       "version": "1.0.0",
       "sha256": "aa84f2d629c0997dc8bfd93059cdbfae24bcfe822ade20edc950561999101092",
       "author": "opendesk",
       "signature": null,
       "path": "nigeria-sme.yaml"
+    },
+    {
+      "id": "pharmacy",
+      "version": "1.0.0",
+      "sha256": "5fd18bfc665d8c9b25152e688d97230968700e6ab96df81291331033709d2009",
+      "author": "opendesk",
+      "signature": null,
+      "path": "pharmacy.yaml"
+    },
+    {
+      "id": "recruitment",
+      "version": "1.0.0",
+      "sha256": "c24910519e249e6a92271951c197139f66d4a627c57c3af042944dd40a9aab78",
+      "author": "opendesk",
+      "signature": null,
+      "path": "recruitment.yaml"
+    },
+    {
+      "id": "religious",
+      "version": "1.0.0",
+      "sha256": "5f01855448db02587cbb9df8ff6d2ea28f03c29751b360a0af5772bb8f880c37",
+      "author": "opendesk",
+      "signature": null,
+      "path": "religious.yaml"
     },
     {
       "id": "salon",
@@ -136,6 +200,22 @@
       "author": "opendesk",
       "signature": null,
       "path": "travel.yaml"
+    },
+    {
+      "id": "utilities-payg",
+      "version": "1.0.0",
+      "sha256": "09101a5b040cc3f2db44e8da8e8adb0f4a066a020f069c7cc63c97ae55779977",
+      "author": "opendesk",
+      "signature": null,
+      "path": "utilities-payg.yaml"
+    },
+    {
+      "id": "vocational",
+      "version": "1.0.0",
+      "sha256": "6bd5591812043c1f8583dd5dc62a6c2670d0ec066d4dbd0f0df93b9a90e983e2",
+      "author": "opendesk",
+      "signature": null,
+      "path": "vocational.yaml"
     }
   ]
 }
