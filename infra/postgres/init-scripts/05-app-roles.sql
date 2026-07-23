@@ -81,3 +81,31 @@ ALTER DEFAULT PRIVILEGES FOR ROLE opendesk IN SCHEMA public
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_knowledge;
 ALTER DEFAULT PRIVILEGES FOR ROLE opendesk IN SCHEMA public
     GRANT USAGE, SELECT ON SEQUENCES TO app_knowledge;
+
+-- ---------------------------------------------------------------------------
+-- Wave 7 (SPEC-W7 Part B): billing-engine role
+-- ---------------------------------------------------------------------------
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_billing') THEN
+        CREATE ROLE app_billing NOLOGIN NOINHERIT;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_billing_login') THEN
+        CREATE ROLE app_billing_login LOGIN PASSWORD 'app_billing_dev_password' IN ROLE app_billing;
+    END IF;
+END
+$$;
+
+-- ---------------------------------------------------------------------------
+-- billing database
+-- ---------------------------------------------------------------------------
+\c billing
+
+GRANT CONNECT ON DATABASE billing TO app_billing;
+GRANT USAGE ON SCHEMA public TO app_billing;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_billing;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_billing;
+ALTER DEFAULT PRIVILEGES FOR ROLE opendesk IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_billing;
+ALTER DEFAULT PRIVILEGES FOR ROLE opendesk IN SCHEMA public
+    GRANT USAGE, SELECT ON SEQUENCES TO app_billing;

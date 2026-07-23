@@ -17,7 +17,9 @@
       { "name": "owner", "description": "Tenant owner — full control including billing and deletion" },
       { "name": "admin", "description": "Tenant admin — manage catalog, bookings, site" },
       { "name": "staff", "description": "Tenant staff — manage bookings" },
-      { "name": "viewer", "description": "Read-only dashboard access" }
+      { "name": "viewer", "description": "Read-only dashboard access" },
+      { "name": "analyst", "description": "KPI/analytics dashboards, no mutations" },
+      { "name": "billing", "description": "invoices, rate cards, payment links" }
     ]
   },
   "groups": [

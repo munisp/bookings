@@ -10,6 +10,8 @@ entity organization {
     relation admin  @user
     relation member @user
     relation viewer @user
+    relation analyst @user
+    relation billing @user
 
     // Catalog (offerings/team/availability) management.
     permission manage_catalog  = owner or admin
@@ -19,6 +21,11 @@ entity organization {
     permission view_dashboard  = owner or admin or member or viewer
     // Public booking site /p/{siteSlug} publishing.
     permission publish_site    = owner or admin
+    // KPI/analytics dashboards (Wave 7): read-only, no mutations.
+    permission view_analytics  = owner or admin or analyst
+    // Invoices, rate cards, payment links (Wave 7 billing-engine).
+    permission view_billing    = owner or billing
+    permission manage_billing  = owner or billing
 }
 
 entity offering {

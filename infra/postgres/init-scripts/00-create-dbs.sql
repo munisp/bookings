@@ -18,3 +18,7 @@ CREATE DATABASE crm_sync;
 -- Wave 5 #10: notification-worker webhook platform (webhook_subscriptions /
 -- webhook_deliveries, bootstrapped idempotently by the service itself).
 CREATE DATABASE notifications;
+-- Wave 7 (SPEC-W7 Part B): billing-engine metering/invoicing database. Schema
+-- (usage_records, rate_cards, invoices, processed_events) is applied
+-- idempotently by the service itself from services/billing-engine/migrations.
+CREATE DATABASE billing;
