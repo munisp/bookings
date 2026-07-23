@@ -1,0 +1,29 @@
+[package]
+name = "billing-engine"
+version = "0.1.0"
+edition = "2021"
+description = "OpenDesk billing engine: usage metering, rating/invoicing, QR payments, dunning (SPEC-W7 Part B)"
+
+# Dependency discipline (SPEC-W7): mirror payments-service's CI-proven set
+# exactly; the ONLY additions are sqlx 0.7 (postgres) and qrcode 0.14 (svg).
+# HMAC-SHA512 is implemented in-crate (src/payments_qr.rs) to avoid pulling in
+# extra crypto crates.
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rdkafka = { version = "0.36", features = ["cmake-build"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+thiserror = "1"
+# SPEC-W7 sanctioned additions only:
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
