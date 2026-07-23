@@ -55,6 +55,15 @@ class Config:
     privacy_topic: str = "opendesk.privacy.events"
     privacy_group: str = "conversation-service-privacy"
 
+    # Data-retention enforcement (NDPA 2023 storage-limitation principle —
+    # docs/compliance/ndpa.md). A background sweeper hard-deletes turns older
+    # than retention_days, batched per tenant. Default 365 days; the NDPA
+    # profile (infra/privacy/ndpa-profile.env) sets 180.
+    retention_enabled: bool = True
+    retention_days: int = 365
+    retention_sweep_seconds: int = 3600
+    retention_batch_size: int = 1000
+
     # OpenSearch indexer (SPEC §10, index `conversations`).
     opensearch_addr: str = "http://opensearch:9200"
     conversations_index: str = "conversations"
@@ -107,4 +116,8 @@ def load() -> Config:
         privacy_enabled=_env("PRIVACY_ENABLED", "true").lower() == "true",
         privacy_topic=_env("PRIVACY_EVENTS_TOPIC", "opendesk.privacy.events"),
         privacy_group=_env("PRIVACY_EVENTS_GROUP", "conversation-service-privacy"),
+        retention_enabled=_env("RETENTION_ENABLED", "true").lower() == "true",
+        retention_days=int(_env("RETENTION_DAYS", "365")),
+        retention_sweep_seconds=int(_env("RETENTION_SWEEP_SECONDS", "3600")),
+        retention_batch_size=int(_env("RETENTION_BATCH_SIZE", "1000")),
     )

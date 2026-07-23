@@ -205,6 +205,68 @@ class Database:
             return (len(ids), int(deleted or 0))
 
     # ------------------------------------------------------------------
+    # Data retention (NDPA 2023 storage limitation — docs/compliance/ndpa.md)
+    # ------------------------------------------------------------------
+
+    async def list_tenant_ids(self) -> list[uuid.UUID]:
+        """Distinct tenant ids present in the conversations table.
+
+        RLS caveat: this enumeration runs WITHOUT app.tenant_id set, so it
+        only sees rows when the connecting role bypasses RLS (the default
+        opendesk superuser DSN). With an RLS-enforced role
+        (app_conversation_login) it returns an empty list — run the
+        retention sweep with the superuser DSN or a maintenance role.
+        """
+        async with self._pool_acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT DISTINCT tenant_id FROM conversations"
+            )
+            return [r["tenant_id"] for r in rows]
+
+    async def delete_turns_older_than(
+        self, tenant_id: uuid.UUID, days: int, batch_size: int = 1000
+    ) -> int:
+        """Hard-delete turns older than ``days`` days for ONE tenant, in
+        batches (bounded lock time per statement). Returns total deleted.
+
+        Runs inside a tenant-scoped transaction (app.tenant_id set), so RLS
+        keeps the sweep inside the tenant even under an enforced role. Turn
+        age is measured on turns.ts against the DATABASE clock (now()), so
+        no app-side clock skew can extend retention. GDPR-erased
+        conversations already have no turns; this is orthogonal and only
+        removes aged rows that erasure did not cover.
+        """
+        total = 0
+        async with self._tenant_tx(tenant_id) as conn:
+            while True:
+                count = int(
+                    await conn.fetchval(
+                        """
+                        WITH doomed AS (
+                            SELECT t.id
+                            FROM turns t
+                            JOIN conversations c ON c.id = t.conversation_id
+                            WHERE t.ts < now() - ($1::int * INTERVAL '1 day')
+                            ORDER BY t.ts
+                            LIMIT $2
+                        ),
+                        d AS (
+                            DELETE FROM turns t USING doomed dm
+                            WHERE t.id = dm.id
+                            RETURNING 1
+                        )
+                        SELECT count(*) FROM d
+                        """,
+                        days,
+                        batch_size,
+                    )
+                    or 0
+                )
+                total += count
+                if count < batch_size:
+                    return total
+
+    # ------------------------------------------------------------------
     # turns
     # ------------------------------------------------------------------
 
