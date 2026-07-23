@@ -74,6 +74,24 @@ upstreams:
         healthy: {http_statuses: [200, 201, 204, 301, 302, 400, 401, 403, 404]}
         unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
 
+  - id: billing
+    type: roundrobin
+    nodes:
+      "billing-engine:7012": 1
+    retries: 1
+    timeout: {connect: 5, send: 30, read: 30}
+    checks:
+      active:
+        type: http
+        http_path: /healthz
+        healthy: {interval: 5, successes: 1, http_statuses: [200]}
+        unhealthy: {interval: 5, http_failures: 2, http_statuses: [500, 502, 503, 504]}
+        timeout: 2
+      passive:
+        type: http
+        healthy: {http_statuses: [200, 201, 204, 301, 302, 400, 401, 403, 404]}
+        unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
+
   - id: knowledge
     type: roundrobin
     nodes:
@@ -402,6 +420,45 @@ routes:
         max_age: 3600
         allow_credential: false
 
+  # Billing engine (SPEC-W7 Part B): standard authenticated service route —
+  # same jwt (openid-connect bearer_only) + rewrite + limit-count pattern as
+  # api-payments. Role enforcement (owner/admin for generate/void) happens in
+  # the service via the x-user-roles header; tenant scoping via X-Tenant-ID.
+  - id: api-billing
+    uris:
+      - /api/billing/*
+      - /api/billing
+    methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+    upstream_id: billing
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/billing/?(.*)"
+          - "/$1"
+      openid-connect:
+        discovery: http://keycloak:8080/realms/opendesk/.well-known/openid-configuration
+        bearer_only: true
+        realm: opendesk
+        client_id: admin-web
+        use_pkce: true
+      limit-count:
+        count: 300
+        time_window: 60
+        rejected_code: 429
+        key: remote_addr
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
   - id: api-knowledge
     uris:
       - /api/knowledge/*
@@ -524,6 +581,38 @@ routes:
       - /webhooks
     methods: [GET, POST, OPTIONS]
     upstream_id: messaging-gateway
+    plugins:
+      limit-count:
+        count: 600
+        time_window: 60
+        rejected_code: 429
+        key: remote_addr
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
+  # ---- Paystack webhook (SPEC-W7 Part B): /webhooks/paystack -> billing-engine ----
+  # PUBLIC like webhooks-messaging (Paystack cannot present Keycloak tokens);
+  # provider-native auth instead: the billing engine verifies the
+  # x-paystack-signature HMAC-SHA512 itself (401 on mismatch). Declared as a
+  # separate exact-URI route because the wildcard /webhooks/* route terminates
+  # on messaging-gateway — APISIX radix-tree matching prefers this exact URI
+  # over the wildcard. No proxy-rewrite: the engine serves /webhooks/paystack
+  # natively. The handler always answers fast (Paystack retry-storms on
+  # non-200), so limit-count stays generous.
+  - id: webhooks-paystack
+    uri: /webhooks/paystack
+    methods: [POST, OPTIONS]
+    upstream_id: billing
     plugins:
       limit-count:
         count: 600
