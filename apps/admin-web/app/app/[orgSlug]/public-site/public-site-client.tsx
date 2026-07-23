@@ -33,6 +33,8 @@ export function PublicSiteClient({ orgSlug }: { orgSlug: string }) {
     template: "classic",
     tagline: "",
     published: false,
+    brandName: "",
+    customDomain: "",
   });
   const [error, setError] = React.useState<string | null>(null);
   const [notFound, setNotFound] = React.useState(false);
@@ -57,6 +59,8 @@ export function PublicSiteClient({ orgSlug }: { orgSlug: string }) {
           template: s.theme?.template ?? "classic",
           tagline: s.tagline ?? "",
           published: s.published,
+          brandName: s.theme?.brandName ?? s.theme?.brand_name ?? "",
+          customDomain: s.theme?.customDomain ?? "",
         });
       } catch (e) {
         if (e instanceof ApiError && e.status === 404) {
@@ -89,6 +93,10 @@ export function PublicSiteClient({ orgSlug }: { orgSlug: string }) {
             accent: form.primaryColor,
             hero_blurb: form.heroSubtitle.trim() || undefined,
             logo_url: form.logoUrl.trim() || undefined,
+            // White-label branding (SPEC-W7 Part C) — same theme jsonb.
+            brandName: form.brandName.trim() || undefined,
+            brand_name: form.brandName.trim() || undefined,
+            customDomain: form.customDomain.trim() || undefined,
           },
         },
         { tenant: orgSlug },
@@ -279,6 +287,50 @@ export function PublicSiteClient({ orgSlug }: { orgSlug: string }) {
                     </option>
                   ))}
                 </Select>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>White label</CardTitle>
+              <CardDescription>
+                Branding shown on the public booking page header and footer
+                instead of the default tenant name.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4">
+              <div className="grid gap-1.5">
+                <Label htmlFor="site-brand-name">Brand display name</Label>
+                <Input
+                  id="site-brand-name"
+                  value={form.brandName}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, brandName: e.target.value }))
+                  }
+                  placeholder="Acme Wellness"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Overrides the business name in the public header/footer.
+                  Combined with the logo and primary colour above this gives a
+                  fully white-labelled booking page.
+                </p>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="site-custom-domain">Custom domain</Label>
+                <Input
+                  id="site-custom-domain"
+                  value={form.customDomain}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, customDomain: e.target.value }))
+                  }
+                  placeholder="book.acme-wellness.com"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Note only — point the DNS record at your gateway and map the
+                  host to <span className="font-mono">/p/{form.site_slug || orgSlug}</span>{" "}
+                  in APISIX (see docs/security/roles.md → white-label setup).
+                </p>
               </div>
             </CardContent>
           </Card>
