@@ -24,6 +24,19 @@ bookingPolicy:
   intakeRequired: true
   cancellationWindowHours: 48
 temporalWorkflow: ClinicIntakeWorkflow
+# Consent text (GDPR/NDPA-style data processing + call recording notice).
+# Optional field — scripts/validate_pack.py and the Go pack loader tolerate
+# extra fields. NOTE: passthrough via identity's GET /v1/tenants/{slug} pack
+# summary is PENDING (the Go Pack/Summary structs do not carry it yet). See
+# docs/compliance/ndpa.md.
+consentText: |
+  This call may be recorded and your name, contact details and appointment
+  information are processed to manage your visits and send reminders. Your
+  data is kept confidential, is never shared with third parties unrelated to
+  your care, and is retained only as long as the clinic's retention policy
+  allows. You may request access, correction or deletion of your data at any
+  time via the clinic's data protection contact. Tell the receptionist now if
+  you do not consent to recording and the call will continue unrecorded.
 offerings:
 - name: General Consultation
   duration_min: 30

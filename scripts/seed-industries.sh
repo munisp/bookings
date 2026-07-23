@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Seed the four industry demo tenants (SPEC-CRM §C5). Uses the direct identity
+# Seed the industry demo tenants (SPEC-CRM §C5). Uses the direct identity
 # port (gateway /api/* requires a JWT). Each tenant is created with its
 # industry pack id; the TenantOnboardingWorkflow then applies the pack
 # (offerings, knowledge seed, terminology) via ApplyIndustryPack.
@@ -19,5 +19,11 @@ create_tenant acme-salon    "Acme Salon & Spa"      salon       "Europe/London" 
 create_tenant acme-clinic   "Acme Health Clinic"    clinic      "Europe/Berlin" "EUR" "de-DE"
 create_tenant acme-consult  "Acme Consulting Group" consultancy "America/New_York" "USD" "en-US"
 create_tenant acme-support  "Acme Support Desk"     support-desk "UTC"          "USD" "en-US"
+# Nigeria SME demo (NDPA profile: infra/privacy/ndpa-profile.env). Prices in
+# the pack are kobo-denominated (NGN); timezone West Africa Time.
+create_tenant acme-ng       "Acme Naija Ventures"   nigeria-sme "Africa/Lagos"  "NGN" "en-NG"
+create_tenant acme-bank     "Acme Bank & Trust"     banking     "Africa/Lagos"  "NGN" "en-NG"
+create_tenant acme-insure   "Acme Insurance Group"  insurance   "America/Chicago" "USD" "en-US"
+create_tenant acme-shop     "Acme Online Store"     ecommerce   "Europe/London" "GBP" "en-GB"
 
 echo "Seed complete. Industry packs are applied asynchronously by the TenantOnboardingWorkflow."

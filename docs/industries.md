@@ -12,7 +12,7 @@ Every pack is a single YAML file named `<id>.yaml` with exactly this schema:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `id` | string | yes | Pack identifier: `salon`, `clinic`, `consultancy`, `support-desk` (must match the file name). Validated by identity-service on `POST /v1/tenants`. |
+| `id` | string | yes | Pack identifier (must match the file name): `salon`, `clinic`, `consultancy`, `support-desk`, `nigeria-sme`, `banking`, `insurance`, `government`, `travel`, `ecommerce`. Validated by identity-service on `POST /v1/tenants`. |
 | `displayName` | string | yes | Human-readable name shown in the admin dashboard ("Industry pack" card). |
 | `terminology` | map | yes | Vocabulary merged into `tenant.terminology`. Keys: `offering`, `team_member`, `booking`, `contact`. Tenant-level overrides win over pack values. |
 | `agentPersona` | string (block) | yes | Appended to the voice agent system prompt at tenant bootstrap. Keep it persona/policy text, not instructions that conflict with tool rules. |
@@ -27,8 +27,12 @@ Every pack is a single YAML file named `<id>.yaml` with exactly this schema:
 | `reminders` | map | yes | `offsets: ["24h","1h", …]`, `channels: ["email","sms", …]` — reminder schedule for the pack. |
 | `knowledgeSeed` | list | yes | `{title, body}` documents seeded into knowledge-service (idempotent by title). |
 | `dashboardLabels` | map | yes | `bookingSingular`, `bookingPlural`, `customerTerm` — admin-web copy; merged below tenant terminology, above built-in defaults. |
+| `languages` | list | no | ISO-639 codes the deployment supports (e.g. `[en, pcm]`). Bounds the voice runtime's language auto-switch set; validated at the voice runtime's pack consumption point (`validate_pack_languages`), not by identity. |
+| `consentText` | string (block) | no | Data-processing / call-recording consent notice (GDPR/NDPA). Validators tolerate it; the Go `Pack`/`Summary` structs carry it (`consentText` in identity's resolved pack summary, `omitempty`) — see docs/compliance/ndpa.md. |
+| `languages` | list of strings | no | ISO-639 language codes the deployment supports (e.g. `[en, pcm]`). Optional; carried through the Go `Pack`/`Summary` structs (`languages`, `omitempty`). |
+| `agents` | list | no | Multi-agent crew (SPEC-W3 §4): `{id, name, persona, intents}` — the voice runtime routes turns to a specialist persona on intent-keyword match. |
 
-## The four built-in packs
+## The built-in packs
 
 | Pack | Terminology | Booking policy | Workflow | Notable behavior |
 |---|---|---|---|---|
@@ -36,6 +40,12 @@ Every pack is a single YAML file named `<id>.yaml` with exactly this schema:
 | **clinic** | practitioner / appointment / patient | intake form required | `ClinicIntakeWorkflow` | Intake reminder T-72h, consent reminder, staff alert at T-2h if incomplete; HIPAA-ish PII care note in the agent persona; no discounts |
 | **consultancy** | consultant / session / client | free discovery call | `ConsultancyFollowupWorkflow` | Post-call follow-up email, proposal follow-up Task created in the CRM, invoice reminder at T-7d |
 | **support-desk** | agent / ticket / requester | — | `SupportEscalationWorkflow` | 4h first-response SLA timer, escalation to the tenant owner + priority event on breach; ticket terminology |
+| **nigeria-sme** | staff / appointment / customer | 30% deposit, ₦2,000 no-show fee, 12h cancellation window | `SalonDepositWorkflow` | Pidgin-first persona with register mirroring (code-switching rules); NGN pricing (kobo); OPay/PalmPay/transfer/cash payments; "no network wahala" rescheduling; `languages: [en, pcm]`; NDPA consent text (pair with `infra/privacy/ndpa-profile.env`, see docs/compliance/ndpa.md) |
+| **banking** | relationship manager / appointment / customer | intake required (KYC checklist), no fees | `ClinicIntakeWorkflow` | Security-conscious receptionist: hard rules against discussing balances/transactions, fraud-hotline triage; KYC document checklist at T-72h; kyc-officer + loan-advisor crew agents |
+| **insurance** | advisor / appointment / policyholder | intake required, no fees | `ClinicIntakeWorkflow` | Empathetic FNOL persona with structured incident intake (policy number, incident date, description, injuries y/n); claims-intake + policy-service crew agents |
+| **government** | officer / appointment / citizen | intake required (document checklist), no fees | `ClinicIntakeWorkflow` | Formal plain-language, accessibility-first persona; hard rule against unofficial fees ("no other payments are required" in the fee-schedule seed); languages en + pcm |
+| **travel** | concierge / reservation / guest | 48h cancellation window | `ConsultancyFollowupWorkflow` | Warm concierge persona; group capacities (shuttle 8, city tour 15); `check_flight_status` demo custom tool (stand-in URL until the Amadeus plugin lands) |
+| **ecommerce** | associate / slot / customer | 4h cancellation window, capacity-based slots | `SupportEscalationWorkflow` | Order-support persona (verify via order lookup, never guess); Shopify + WooCommerce order-lookup custom tools (plugin hosts allowlisted via `PLUGIN_ALLOWED_HOSTS`); order-support + sales-assistant crew agents |
 
 ## How onboarding applies a pack
 

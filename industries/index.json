@@ -2,9 +2,17 @@
   "schemaVersion": 1,
   "packs": [
     {
-      "id": "clinic",
+      "id": "banking",
       "version": "1.0.0",
-      "sha256": "e531855da9a54b264be231d9c55f038a533c227ed9104c32c33ddc7ad480851a",
+      "sha256": "81b147842f2919144170a9c7738288d30390a5b3553beb8a3f69e67a811691de",
+      "author": "opendesk",
+      "signature": null,
+      "path": "banking.yaml"
+    },
+    {
+      "id": "clinic",
+      "version": "1.1.0",
+      "sha256": "6a4e80db039853f85553730b46409752659797bb65ed29a94e1a49125d47d0d0",
       "author": "opendesk",
       "signature": null,
       "path": "clinic.yaml"
@@ -16,6 +24,38 @@
       "author": "opendesk",
       "signature": null,
       "path": "consultancy.yaml"
+    },
+    {
+      "id": "ecommerce",
+      "version": "1.0.0",
+      "sha256": "0e0e09a2b64e30bd581ed84e9e766e7bddfce8a974aa0ff9d1cc3ab7f2ce9945",
+      "author": "opendesk",
+      "signature": null,
+      "path": "ecommerce.yaml"
+    },
+    {
+      "id": "government",
+      "version": "1.0.0",
+      "sha256": "34bbf1444fd6f0ed0ffadc5ed1fac8cc568da468fa5f83ec1447d9b55ded7b81",
+      "author": "opendesk",
+      "signature": null,
+      "path": "government.yaml"
+    },
+    {
+      "id": "insurance",
+      "version": "1.0.0",
+      "sha256": "a1a5aff9c0972c3863638ce7003ba15ae1f8b2661d8beb54b28f3a63cabb615a",
+      "author": "opendesk",
+      "signature": null,
+      "path": "insurance.yaml"
+    },
+    {
+      "id": "nigeria-sme",
+      "version": "1.0.0",
+      "sha256": "aa84f2d629c0997dc8bfd93059cdbfae24bcfe822ade20edc950561999101092",
+      "author": "opendesk",
+      "signature": null,
+      "path": "nigeria-sme.yaml"
     },
     {
       "id": "salon",
@@ -32,6 +72,14 @@
       "author": "opendesk",
       "signature": null,
       "path": "support-desk.yaml"
+    },
+    {
+      "id": "travel",
+      "version": "1.0.0",
+      "sha256": "b098e195fafeb34a74720dafeec666ea7e942b6585b077056d9c0869ca2d6558",
+      "author": "opendesk",
+      "signature": null,
+      "path": "travel.yaml"
     }
   ]
 }
