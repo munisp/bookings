@@ -1,0 +1,138 @@
+# Neighborhood watch industry pack (SPEC-W7 Part A) — community watch
+# groups. Observe & report ONLY: members never confront suspects. Emergencies
+# always go to the national emergency number first; non-emergencies are
+# escalated to the police non-emergency line.
+id: neighborhood-watch
+displayName: Neighborhood Watch
+terminology:
+  offering: activity
+  team_member: coordinator
+  booking: signup
+  contact: resident
+agentPersona: |
+  You are the coordinator's assistant for a community neighborhood watch
+  group. You are friendly, neighbourly and practical. You help residents
+  report suspicious activity, sign up for patrol shifts and meetings, and
+  onboard new members.
+
+  Hard rules (never break these):
+  - NEVER CONFRONT: the watch observes and reports only. If a caller asks
+    what to do about a suspicious person or situation, always say: do not
+    approach, do not confront, do not follow — move to a safe place, note
+    details from a distance, and report it. Members never carry weapons on
+    patrol and never physically intervene.
+  - EMERGENCIES FIRST: if a crime is in progress, someone is in danger, or
+    anyone is hurt or threatened, STOP and tell the caller to hang up and
+    dial the national emergency number FIRST (911 in the US/Canada, 999 in
+    the UK, 112 in the EU and many other countries — use the number for the
+    caller's locale). The watch never responds to incidents itself.
+  - You NEVER dispatch patrol members to an incident and NEVER promise that
+    anyone will attend or how quickly — you record reports and pass them on
+    through the escalation path only.
+  - You NEVER give legal advice and NEVER accuse or identify any person as
+    a criminal — reports describe observed behaviour (what was seen, where,
+    when), not names or allegations.
+  - EVERY report gets a reference number. Read it out slowly and tell the
+    caller to keep it for follow-up with the coordinator or the police
+    non-emergency line.
+  - Keep member details private: never share one member's name, phone number
+    or patrol schedule with another caller.
+
+  What you do: take suspicious-activity reports (observe-and-report style:
+  what, where, when, description); sign members up for patrol shifts; book
+  seats at community meetings; explain the escalation path to the police
+  non-emergency line; and onboard new members (welcome session, code of
+  conduct, patrol basics).
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 24
+temporalWorkflow: ConsultancyFollowupWorkflow
+offerings:
+- name: Suspicious-Activity Report Intake
+  duration_min: 15
+  buffer_min: 5
+  price_cents: 0
+  capacity: 6
+- name: Patrol Shift Signup
+  duration_min: 10
+  buffer_min: 5
+  price_cents: 0
+  capacity: 4
+- name: Community Meeting Seat
+  duration_min: 90
+  buffer_min: 15
+  price_cents: 0
+  capacity: 40
+- name: Incident Escalation Call (Police Non-Emergency)
+  duration_min: 15
+  buffer_min: 5
+  price_cents: 0
+  capacity: 4
+- name: New-Member Onboarding Session
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 0
+  capacity: 10
+reminders:
+  offsets: ["48h", "2h"]
+  channels: ["sms", "email"]
+knowledgeSeed:
+- title: Observe & report only — the golden rule
+  body: |
+    Neighborhood watch members NEVER confront, approach, follow or detain
+    anyone. The watch is eyes and ears only. If a resident reports something
+    happening right now, the guidance is always: keep a safe distance, go
+    indoors or to a lit public place, note what you can see without
+    approaching (appearance, clothing, direction of travel, vehicle make/
+    colour/plate if safely visible), and report it. If a crime is in
+    progress or anyone is in danger, the caller must hang up and dial the
+    national emergency number FIRST — the watch never responds to live
+    incidents. Members patrol in pairs, in daylight or early evening, with a
+    charged phone and hi-vis vest, and never carry weapons.
+- title: Escalation path — emergency vs police non-emergency
+  body: |
+    EMERGENCY (dial the national emergency number first — 911 US/Canada,
+    999 UK, 112 EU and many other countries): crime in progress, break-in
+    happening now, assault, anyone in danger, weapons seen, serious
+    accident. Say: "Please hang up and dial the emergency number now."
+    POLICE NON-EMERGENCY LINE (via the Incident Escalation Call): suspicious
+    activity that is not an immediate threat, past-tense vandalism or theft,
+    repeated loitering, abandoned vehicles, drug-use sightings after the
+    fact. The coordinator logs it with the police non-emergency number and
+    links it to the watch report reference.
+    WATCH-LEVEL ONLY: neighbour disputes, noise, untidy property — these go
+    to the community meeting agenda or the local council, not the police.
+    Every report at every level gets a watch reference number; quote it in
+    any follow-up so reports can be linked.
+- title: Writing a good suspicious-activity report
+  body: |
+    A good report answers: WHAT was observed (behaviour, not assumptions —
+    "a person tried several car door handles", not "a thief"), WHERE (exact
+    street address or nearest landmark), WHEN (date and time), WHO (number
+    of people, approximate age, height, clothing, distinguishing features —
+    descriptions only, never names or accusations), and WHICH WAY they went
+    or what vehicle they used. Photos or doorbell-camera footage can be
+    shared with the coordinator. Reports never name or accuse a person; they
+    describe observed behaviour only. Every report receives a reference
+    number — always read it out and ask the resident to keep it.
+- title: Patrols, meetings & new members
+  body: |
+    Patrol shifts run in pairs on a rota (typically 60–90 minutes); sign up
+    with a confirmed phone number so the coordinator can reach you if the
+    rota changes — cancel at least 24 hours ahead so a replacement can be
+    found. Community meetings are monthly, seats are limited (book a seat,
+    capacity 40), and the agenda covers recent reports (anonymised by
+    reference number), police liaison updates and safety campaigns. New
+    members start with a free onboarding session: the code of conduct
+    (observe & report only, no confrontation, confidentiality), patrol
+    basics, the escalation path, and how reference numbers work. Membership
+    is free and open to all residents aged 18+; details of members are never
+    shared outside the coordinator team.
+dashboardLabels:
+  bookingSingular: Signup
+  bookingPlural: Signups
+  customerTerm: Resident
+languages: [en]

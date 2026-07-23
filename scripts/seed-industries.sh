@@ -35,5 +35,10 @@ create_tenant acme-fashion  "Acme Fashion House"      fashion     "Africa/Lagos"
 create_tenant acme-mfb      "Acme Microfinance Cooperative" microfinance "Africa/Lagos" "NGN" "en-NG"
 create_tenant acme-pharm    "Acme Pharmacy & Stores"        pharmacy     "Africa/Lagos" "NGN" "en-NG"
 create_tenant acme-logistics "Acme Express Logistics"       logistics    "Africa/Lagos" "NGN" "en-NG"
+# Wave 7: public-safety vertical demos (SPEC-W7 Part A). Non-emergency
+# reporting only; the packs' hard rules route emergencies to the national
+# emergency number first.
+create_tenant city-civic      "City Civic Services (311)"     civic-services     "America/New_York" "USD" "en-US"
+create_tenant community-watch "Community Watch Network"       neighborhood-watch "Europe/London"   "GBP" "en-GB"
 
 echo "Seed complete. Industry packs are applied asynchronously by the TenantOnboardingWorkflow."

@@ -26,6 +26,14 @@
       "path": "banking.yaml"
     },
     {
+      "id": "civic-services",
+      "version": "1.0.0",
+      "sha256": "7f91d278ac254018abebb23c1a4fd919186f43bae3aba942e9f53afb7580531d",
+      "author": "opendesk",
+      "signature": null,
+      "path": "civic-services.yaml"
+    },
+    {
       "id": "clinic",
       "version": "1.1.0",
       "sha256": "6a4e80db039853f85553730b46409752659797bb65ed29a94e1a49125d47d0d0",
@@ -106,6 +114,14 @@
       "path": "isp-installer.yaml"
     },
     {
+      "id": "law-enforcement",
+      "version": "1.0.0",
+      "sha256": "3b97391a576f239916164df3ceeb9b5aa581983458bc37b391644539b4ded9b8",
+      "author": "opendesk",
+      "signature": null,
+      "path": "law-enforcement.yaml"
+    },
+    {
       "id": "legal-aid",
       "version": "1.0.0",
       "sha256": "57c13d3563fc9fef5f13bd7fc4590e10da1525e89c734a0f40f261ff59dc1d12",
@@ -128,6 +144,14 @@
       "author": "opendesk",
       "signature": null,
       "path": "microfinance.yaml"
+    },
+    {
+      "id": "neighborhood-watch",
+      "version": "1.0.0",
+      "sha256": "f041cdcb299814ce0cde680179cdc2a0e3273a53e4ced5a1e564c30942c89c30",
+      "author": "opendesk",
+      "signature": null,
+      "path": "neighborhood-watch.yaml"
     },
     {
       "id": "nigeria-sme",
