@@ -329,6 +329,70 @@ export interface Invoice {
   paid_at?: string | null;
 }
 
+// ---------- booking-service: geospatial (SPEC-W8) ----------
+
+/** One booking-joined contact point (GET /v1/locations/summary). */
+export interface LocationPoint {
+  lat: number;
+  lng: number;
+  booking_id?: string;
+  offering_id?: string;
+  starts_at?: string;
+}
+
+/** Server-side cluster cell (returned instead of raw points above 500 rows). */
+export interface LocationCluster {
+  lat: number;
+  lng: number;
+  count: number;
+}
+
+export interface LocationsSummary {
+  points?: LocationPoint[];
+  clusters?: LocationCluster[];
+}
+
+/**
+ * Saved service area (GET /v1/service-areas). The geometry may come back as
+ * `geojson` (object or string) or `geom` depending on the service build.
+ */
+export interface ServiceArea {
+  id: string;
+  tenant_id?: string;
+  name: string;
+  geojson?: unknown;
+  geom?: unknown;
+  meta?: Record<string, unknown>;
+  created_at?: string;
+}
+
+/** Audience preview (POST /v1/geo/audience/preview). */
+export interface GeoAudiencePreview {
+  count: number;
+  sample?: { contact_id: string; phone_masked: string }[];
+}
+
+export type GeoCampaignStatus =
+  | "draft"
+  | "running"
+  | "completed"
+  | "failed"
+  | string;
+
+/** Geo-targeted campaign (GET /v1/geo/campaigns). */
+export interface GeoCampaign {
+  id: string;
+  tenant_id?: string;
+  name: string;
+  channel: string;
+  message?: string;
+  audience_count: number;
+  status: GeoCampaignStatus;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
 // ---------- conversation / voice ----------
 
 export interface ChatRequest {

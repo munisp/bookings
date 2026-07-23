@@ -18,10 +18,17 @@ import {
   LineChart,
   Webhook,
   MessagesSquare,
+  MapPin,
+  Target,
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { canViewAnalytics, canViewBilling } from "@/lib/roles";
+import {
+  canViewAnalytics,
+  canViewBilling,
+  canViewGeoCampaigns,
+  canViewLocations,
+} from "@/lib/roles";
 
 /** Self-hosted Twenty CRM UI (SPEC-CRM §A). */
 const CRM_URL = "http://localhost:3100";
@@ -46,6 +53,8 @@ const items: NavItem[] = [
   { segment: "analytics", label: "Analytics", icon: BarChart3 },
   { segment: "webhooks", label: "Webhooks", icon: Webhook },
   { segment: "channels", label: "Channels", icon: MessagesSquare },
+  { segment: "locations", label: "Locations", icon: MapPin },
+  { segment: "geo-campaigns", label: "Geo campaigns", icon: Target },
   { external: CRM_URL, label: "CRM", icon: UsersRound },
   { external: GRAFANA_URL, label: "Grafana", icon: LineChart },
   { segment: "settings", label: "Settings", icon: Settings },
@@ -78,6 +87,12 @@ export function OrgNav({
       return canViewBilling(roles);
     if ("segment" in item && item.segment === "analytics")
       return canViewAnalytics(roles);
+    // SPEC-W8 Part C: locations is owner/admin/staff; geo campaigns is
+    // owner/admin only. The pages enforce the same rule server-side.
+    if ("segment" in item && item.segment === "locations")
+      return canViewLocations(roles);
+    if ("segment" in item && item.segment === "geo-campaigns")
+      return canViewGeoCampaigns(roles);
     return true;
   });
 

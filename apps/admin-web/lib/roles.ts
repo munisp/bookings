@@ -25,6 +25,16 @@ export const ANALYTICS_ROLES: readonly RealmRole[] = [
 /** Billing section (invoices, rate cards, payouts, QR payment links). */
 export const BILLING_ROLES: readonly RealmRole[] = ["owner", "billing"];
 
+/** Locations map dashboard (SPEC-W8 Part C) — operational staff can view. */
+export const LOCATIONS_ROLES: readonly RealmRole[] = [
+  "owner",
+  "admin",
+  "staff",
+];
+
+/** Geo-targeted campaigns (SPEC-W8 Part C) — messaging spend, owner/admin. */
+export const GEO_CAMPAIGN_ROLES: readonly RealmRole[] = ["owner", "admin"];
+
 export function hasAnyRole(
   roles: readonly string[] | undefined | null,
   allowed: readonly RealmRole[],
@@ -45,4 +55,18 @@ export function canViewBilling(
   roles: readonly string[] | undefined | null,
 ): boolean {
   return hasAnyRole(roles, BILLING_ROLES);
+}
+
+/** owner/admin/staff — viewers and analysts never see the locations map. */
+export function canViewLocations(
+  roles: readonly string[] | undefined | null,
+): boolean {
+  return hasAnyRole(roles, LOCATIONS_ROLES);
+}
+
+/** owner/admin — staff, viewer, analyst and billing never launch geo campaigns. */
+export function canViewGeoCampaigns(
+  roles: readonly string[] | undefined | null,
+): boolean {
+  return hasAnyRole(roles, GEO_CAMPAIGN_ROLES);
 }
