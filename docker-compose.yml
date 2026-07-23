@@ -571,5 +571,39 @@ services:
     environment:
       DAPR_APP_ID: crm-sync
       DAPR_APP_PORT: '7010'
+  billing-engine:
+    build: ./services/billing-engine
+    # Optional: secrets/dev overrides (compose still boots without it —
+    # every ${VAR} below carries a dev fallback). cp .env.example .env
+    env_file:
+    - path: .env
+      required: false
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      PG_DSN: postgres://opendesk:opendesk@postgres:5432
+      PORT: '7012'
+      # Per-service DB role (SPEC-W3 §2): set BILLING_PG_USER=app_billing_login
+      # + BILLING_PG_PASS in .env (see 05-app-roles.sql). Default stays
+      # opendesk/opendesk for dev parity.
+      DATABASE_URL: postgres://${BILLING_PG_USER:-opendesk}:${BILLING_PG_PASS:-opendesk}@postgres:5432/billing
+      KAFKA_GROUP_ID: billing-engine
+      USAGE_EVENTS_TOPIC: opendesk.usage.events
+      BILLING_EVENTS_TOPIC: opendesk.billing.events
+      # Wave 7 (SPEC-W7 Part B): Paystack live mode when the secret key is
+      # set; otherwise static EMVCo-style QR payloads from the account below.
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
+      PAYSTACK_DEFAULT_EMAIL: ${PAYSTACK_DEFAULT_EMAIL:-billing@opendesk.local}
+      PAYSTACK_CALLBACK_URL: ${PAYSTACK_CALLBACK_URL:-http://localhost:9080/billing/callback}
+      BILLING_STATIC_ACCOUNT: ${BILLING_STATIC_ACCOUNT:-OPENDESK/0123456789}
+      BILLING_MERCHANT_NAME: ${BILLING_MERCHANT_NAME:-OPENDESK DEMO}
+      DUNNING_INTERVAL_S: ${DUNNING_INTERVAL_S:-3600}
+      INVOICE_DUE_DAYS: ${INVOICE_DUE_DAYS:-14}
+    ports:
+    - 7012:7012
+    networks:
+    - opendesk
+    depends_on:
+    - postgres
+    - kafka
 volumes:
   ollama-models: null
