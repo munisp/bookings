@@ -22,6 +22,7 @@ from .indexer import TranscriptIndexer
 from .logging import get_logger, setup
 from .privacy import PrivacyEraseConsumer
 from .quality import CallQualityEnricher
+from .retention import RetentionSweeper
 from .routes import router
 from .sinks import KafkaSink, TranscriptSink, build_sink
 
@@ -37,6 +38,7 @@ class State:
     indexer: TranscriptIndexer | None
     quality_enricher: CallQualityEnricher | None
     privacy: PrivacyEraseConsumer | None
+    retention: RetentionSweeper | None
     log: object
 
 
@@ -114,6 +116,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         privacy = PrivacyEraseConsumer(cfg, db)
         privacy.start()
 
+    # NDPA/GDPR storage limitation: hourly hard-delete of aged turns
+    # (RETENTION_DAYS, default 365; NDPA profile sets 180).
+    retention: RetentionSweeper | None = None
+    if cfg.retention_enabled:
+        retention = RetentionSweeper(cfg, db)
+        retention.start()
+
     app.state.cfg = cfg
     app.state.db = db
     app.state.dapr = dapr
@@ -122,7 +131,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.quality_sink = quality_sink
     app.state.log = log
     log.info("conversation-service started", port=cfg.port, sink=cfg.transcript_sink,
-             intel_llm=cfg.intel_llm, quality_enrich=cfg.quality_enrich_enabled)
+             intel_llm=cfg.intel_llm, quality_enrich=cfg.quality_enrich_enabled,
+             retention_days=cfg.retention_days if cfg.retention_enabled else None)
 
     try:
         yield
@@ -136,6 +146,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if privacy is not None:
             with contextlib.suppress(Exception):
                 await privacy.stop()
+        if retention is not None:
+            with contextlib.suppress(Exception):
+                await retention.stop()
         with contextlib.suppress(Exception):
             await sink.close()
         with contextlib.suppress(Exception):
