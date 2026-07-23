@@ -33,6 +33,11 @@ var ErrConflict = errors.New("conflict")
 // Store wraps a pgx connection pool.
 type Store struct {
 	pool *pgxpool.Pool
+	// geoEnabled reports whether the PostGIS geo tables (SPEC-W8) were
+	// bootstrapped; false when the server lacks the postgis extension
+	// (e.g. embedded-Postgres tests) — geo store methods then return
+	// ErrPostGISUnavailable instead of failing at query time.
+	geoEnabled bool
 }
 
 // New connects to Postgres, verifies connectivity and ensures the `sites`
@@ -69,6 +74,20 @@ func New(ctx context.Context, databaseURL string, maxConns int32) (*Store, error
 	if err := s.ensureCRMColumns(ctx); err != nil {
 		pool.Close()
 		return nil, err
+	}
+	if err := s.ensurePortalTokensTable(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	// Geo tables (SPEC-W8): best-effort — a missing postgis extension
+	// disables geo features without breaking the rest of the service.
+	if err := s.ensureGeoTables(ctx); err != nil {
+		if !errors.Is(err, ErrPostGISUnavailable) {
+			pool.Close()
+			return nil, err
+		}
+	} else {
+		s.geoEnabled = true
 	}
 	return s, nil
 }

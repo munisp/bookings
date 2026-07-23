@@ -15,6 +15,7 @@ import (
 	"github.com/opendesk/booking-service/internal/bookingops"
 	"github.com/opendesk/booking-service/internal/cache"
 	"github.com/opendesk/booking-service/internal/daprc"
+	"github.com/opendesk/booking-service/internal/geo"
 	"github.com/opendesk/booking-service/internal/permify"
 	"github.com/opendesk/booking-service/internal/store"
 	"go.uber.org/zap"
@@ -60,6 +61,9 @@ type Deps struct {
 	// TenantBySlug resolves tenant context for portal reschedule (timezone).
 	// nil → Resolver.BySlug is used.
 	TenantBySlug func(ctx context.Context, slug string) (bookingops.TenantInfo, error)
+	// Geo serves the SPEC-W8 geospatial endpoints (locations, service
+	// areas, geo campaigns). Nil → those routes answer 503.
+	Geo *geo.Handlers
 }
 
 type ctxKey string
@@ -115,6 +119,21 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/{id}", s.getContact)
 			r.With(s.require("manage_bookings")).Put("/{id}", s.updateContact)
 			r.With(s.require("manage_bookings")).Delete("/{id}", s.deleteContact)
+			// SPEC-W8 A2: contact location upsert (lat/lng or geocoded address).
+			r.With(s.require("manage_bookings")).Put("/{id}/location", s.geoHandler((*geo.Handlers).PutContactLocation))
+		})
+		// SPEC-W8 A2 geospatial endpoints (BFF: /api/bookings/v1/...).
+		r.Get("/locations/summary", s.geoHandler((*geo.Handlers).LocationsSummary))
+		r.Route("/service-areas", func(r chi.Router) {
+			r.Get("/", s.geoHandler((*geo.Handlers).ListServiceAreas))
+			r.With(s.require("manage_bookings")).Post("/", s.geoHandler((*geo.Handlers).CreateServiceArea))
+			r.With(s.require("manage_bookings")).Delete("/{id}", s.geoHandler((*geo.Handlers).DeleteServiceArea))
+		})
+		r.Route("/geo", func(r chi.Router) {
+			r.With(s.require("manage_bookings")).Post("/audience/preview", s.geoHandler((*geo.Handlers).AudiencePreview))
+			r.With(s.require("manage_bookings")).Post("/campaigns", s.geoHandler((*geo.Handlers).CreateGeoCampaign))
+			r.Get("/campaigns", s.geoHandler((*geo.Handlers).ListGeoCampaigns))
+			r.Get("/campaigns/{id}", s.geoHandler((*geo.Handlers).GetGeoCampaign))
 		})
 		r.Route("/bookings", func(r chi.Router) {
 			r.With(s.require("manage_bookings")).Post("/", s.createBooking)
@@ -281,6 +300,19 @@ func (s *server) require(permission string) func(http.Handler) http.Handler {
 func tenantFrom(ctx context.Context) bookingops.TenantInfo {
 	t, _ := ctx.Value(ctxTenant).(bookingops.TenantInfo)
 	return t
+}
+
+// geoHandler adapts a geo.Handlers method to http.HandlerFunc, injecting
+// the tenant context. Answers 503 when geo is not configured (Deps.Geo
+// nil) so partial deployments keep the rest of the API intact.
+func (s *server) geoHandler(fn func(*geo.Handlers, http.ResponseWriter, *http.Request, bookingops.TenantInfo)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.d.Geo == nil {
+			writeError(w, http.StatusServiceUnavailable, "geo features unavailable")
+			return
+		}
+		fn(s.d.Geo, w, r, tenantFrom(r.Context()))
+	}
 }
 
 func userFrom(ctx context.Context) string {
