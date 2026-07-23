@@ -1,5 +1,6 @@
-// Package httpapi exposes the messaging-gateway HTTP API: the three
-// provider send endpoints, /healthz and /metrics.
+// Package httpapi exposes the messaging-gateway HTTP API: the provider
+// send endpoints, the omnichannel inbound webhooks (SPEC-W6 Part A),
+// /healthz and /metrics.
 package httpapi
 
 import (
@@ -18,8 +19,16 @@ type Server struct {
 	Termii   *provider.Termii
 	AT       *provider.AfricasTalking
 	WhatsApp *provider.WhatsApp
-	Metrics  *metrics.Registry
-	Log      *zap.Logger
+	Telegram *provider.Telegram
+
+	// Omnichannel inbound (SPEC-W6 Part A).
+	Bridge                Bridger // nil: inbound disabled, webhooks drop + 200
+	WhatsAppVerifyToken   string  // WHATSAPP_VERIFY_TOKEN (Meta GET handshake)
+	TelegramBotUsername   string  // TELEGRAM_BOT_USERNAME (site-map route key)
+	TelegramWebhookSecret string  // TELEGRAM_WEBHOOK_SECRET (optional shared secret)
+
+	Metrics *metrics.Registry
+	Log     *zap.Logger
 }
 
 // Router builds the chi router.
@@ -42,6 +51,16 @@ func (s *Server) Router() http.Handler {
 		r.Post("/termii/sms", s.handleTermiiSMS)
 		r.Post("/africastalking/sms", s.handleATSMS)
 		r.Post("/whatsapp/send", s.handleWhatsAppSend)
+		r.Post("/telegram/send", s.handleTelegramSend)
+	})
+
+	// Omnichannel inbound webhooks (SPEC-W6 Part A). Public by design —
+	// authentication is the Meta verify token / Telegram shared secret, and
+	// handlers always answer 200 fast (providers retry-storm on non-200).
+	r.Route("/webhooks", func(r chi.Router) {
+		r.Get("/whatsapp", s.handleWhatsAppVerify)
+		r.Post("/whatsapp", s.handleWhatsAppWebhook)
+		r.Post("/telegram", s.handleTelegramWebhook)
 	})
 	// Future: POST /v1/ussd/session (Termii / AT USSD gateways) — see
 	// docs/integrations/messaging-channels.md.
