@@ -20,7 +20,7 @@ from aiokafka import AIOKafkaConsumer, TopicPartition
 from . import metrics
 from .config import Settings
 from .iceberg_tables import IcebergSink
-from .mapping import map_booking_event, map_payment_event, map_transcript
+from .mapping import map_booking_event, map_payment_event, map_transcript, map_usage_event
 
 log = structlog.get_logger()
 
@@ -33,6 +33,8 @@ def topic_registry(settings: Settings) -> dict[str, tuple[str, Mapper]]:
         settings.topic_booking_events: ("booking_events", map_booking_event),
         settings.topic_payment_events: ("payment_events", map_payment_event),
         settings.topic_transcripts: ("transcripts", map_transcript),
+        # Wave 5 #9: usage metering records -> bronze.usage_events.
+        settings.topic_usage_events: ("usage_events", map_usage_event),
     }
 
 

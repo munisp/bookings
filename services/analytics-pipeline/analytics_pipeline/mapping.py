@@ -21,6 +21,7 @@ without timezone — consistent with the Spark silver jobs, which run with
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
@@ -61,6 +62,19 @@ TRANSCRIPT_COLUMNS = (
     "text",
     "ts",
     "audio_url",
+)
+
+# STRATEGY §3, Wave 5 #9: one row per usage record emitted on
+# opendesk.usage.events ({tenant_id, metric, value, ts, meta}). `value` is a
+# double (call-minutes are fractional); `meta` is the raw JSON of the free-form
+# meta object. occurred_at comes from the payload `ts` (fallback: CE time).
+USAGE_EVENT_COLUMNS = (
+    "event_id",
+    "tenant_id",
+    "metric",
+    "value",
+    "occurred_at",
+    "meta",
 )
 
 _CAMEL_RE = re.compile(r"(?<!^)(?=[A-Z])")
@@ -134,6 +148,15 @@ def _as_str(value: Any) -> Optional[str]:
     return value if isinstance(value, str) else str(value)
 
 
+def _as_float(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def map_booking_event(message: Mapping[str, Any]) -> dict[str, Any]:
     envelope, data = split_envelope(message)
     return {
@@ -193,4 +216,24 @@ def map_transcript(message: Mapping[str, Any]) -> dict[str, Any]:
         "text": _as_str(_get(data, "text")),
         "ts": parse_ts(_get(data, "ts", "timestamp")) or parse_ts(envelope.get("time")),
         "audio_url": _as_str(_get(data, "audio_url", "audioUrl")),
+    }
+
+
+def map_usage_event(message: Mapping[str, Any]) -> dict[str, Any]:
+    """Usage metering record (Wave 5 #9). Bare payloads of the shape
+    {tenant_id, metric, value, ts, meta} are the contract; CloudEvent
+    envelopes are tolerated. Sparse data is normal (v1 emits bookings only) —
+    every field except tenant/metric/value may be null."""
+    envelope, data = split_envelope(message)
+    meta = _get(data, "meta", "metadata")
+    return {
+        "event_id": _as_str(envelope.get("id") or _get(data, "event_id", "eventId")),
+        "tenant_id": _as_str(
+            envelope.get("tenantid") or _get(data, "tenant_id", "tenantId")
+        ),
+        "metric": _as_str(_get(data, "metric")),
+        "value": _as_float(_get(data, "value")),
+        "occurred_at": parse_ts(_get(data, "ts", "timestamp", "occurred_at", "occurredAt"))
+        or parse_ts(envelope.get("time")),
+        "meta": json.dumps(meta, sort_keys=True) if meta is not None else None,
     }
