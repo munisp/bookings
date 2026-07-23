@@ -30,6 +30,12 @@ const (
 	// duplicates kind=booking deliberately so the reverse contract is
 	// explicit and stable even if the forward mapping evolves.
 	KindBookingTask = "booking_task"
+	// KindQualityNote maps conversation id -> Twenty note id for the AI call
+	// summary note (Wave 5 #2). Written by BOTH the plain SessionEnded
+	// fallback and the CallQualityEnriched path so the two consumers dedupe:
+	// whichever event arrives first creates the note; the enriched event
+	// patches the body in place when the note already exists.
+	KindQualityNote = "quality_note"
 )
 
 // errPermanent marks failures that retrying cannot heal (bad payloads,
@@ -313,6 +319,18 @@ func (s *Syncer) findPersonForNote(ctx context.Context, phone, email string) (st
 // Twenty Note ("📞 AI call summary") on the caller's Person, linked via
 // /rest/noteTargets — the same pattern as the AI-booking note above.
 //
+// Wave 5 #2 (eventual consistency, honestly): this is the FALLBACK path.
+// The note created here carries no sentiment (the voice runtime does not
+// compute it). conversation-service republishes the session as
+// CallQualityEnriched on opendesk.conversation.quality with avg sentiment a
+// moment later; handleCallQualityEnriched then PATCHes this note's body in
+// place (dedupe via sync_map kind=quality_note). When the enriched event
+// arrives first (or the plain event was skipped for missing data), the
+// enriched path creates the note itself and this handler becomes a no-op.
+// Both consumers run concurrently, so a create/create race is theoretically
+// possible; the sync_map row makes the common orderings exactly-once and the
+// race degrades to one duplicate note, never to lost sentiment.
+//
 // Skip+ack (documented) cases — none of these are errors worth a retry:
 //   - the event carries no quality object: the session recorded no signals
 //     (voice-agent-runtime omits the key entirely in that case);
@@ -337,7 +355,15 @@ func (s *Syncer) handleSessionEnded(ctx context.Context, evt events.CloudEvent) 
 			zap.String("conversation_id", d.ConversationID))
 		return nil
 	}
-	personID, err := s.resolvePersonForCall(ctx, phone, parseUUID(evt.TenantID))
+	tenantUUID := parseUUID(evt.TenantID)
+	if handled, err := s.qualityNoteExists(ctx, d.ConversationID, tenantUUID); err != nil {
+		return err
+	} else if handled {
+		s.Log.Debug("call-summary note already handled by enriched path; skipping",
+			zap.String("conversation_id", d.ConversationID))
+		return nil
+	}
+	personID, err := s.resolvePersonForCall(ctx, phone, tenantUUID)
 	if err != nil {
 		return fmt.Errorf("resolve person for call summary: %w", err)
 	}
@@ -351,10 +377,126 @@ func (s *Syncer) handleSessionEnded(ctx context.Context, evt events.CloudEvent) 
 	if err != nil {
 		return fmt.Errorf("create call summary note: %w", err)
 	}
+	if err := s.rememberQualityNote(ctx, d.ConversationID, noteID, tenantUUID); err != nil {
+		return err
+	}
 	s.Log.Info("AI call summary note added",
 		zap.String("person_id", personID),
 		zap.String("note_id", noteID),
 		zap.String("conversation_id", d.ConversationID))
+	return nil
+}
+
+// HandleQuality processes opendesk.conversation.quality (Wave 5 #2):
+// CallQualityEnriched = the SessionEnded call-quality payload + avg per-turn
+// sentiment computed by conversation-service from the turns table.
+func (s *Syncer) HandleQuality(ctx context.Context, evt events.CloudEvent) error {
+	if evt.Type != events.TypeCallQualityEnriched {
+		s.Log.Debug("ignoring quality event", zap.String("type", evt.Type))
+		return nil
+	}
+	return s.handleCallQualityEnriched(ctx, evt)
+}
+
+// handleCallQualityEnriched is the preferred call-summary note path: the
+// note body includes the avg sentiment segment. Merge logic:
+//   - sync_map kind=quality_note already maps this conversation -> the plain
+//     SessionEnded fallback created the note first: PATCH the body to the
+//     sentiment-enriched rendering (idempotent on redelivery);
+//   - no mapping yet: create the note here (covers the "plain event skipped
+//     for missing data" case) and record the mapping so a late plain
+//     SessionEnded does not create a duplicate.
+//
+// Skip+ack cases mirror handleSessionEnded (no quality / no confirmed_phone
+// / unresolvable person).
+func (s *Syncer) handleCallQualityEnriched(ctx context.Context, evt events.CloudEvent) error {
+	d, err := events.DataAs[events.CallQualityEnrichedData](evt)
+	if err != nil {
+		return permanent(err)
+	}
+	if d.Quality == nil {
+		s.Log.Debug("CallQualityEnriched without quality; skipping note",
+			zap.String("conversation_id", d.ConversationID))
+		return nil
+	}
+	phone := strings.TrimSpace(d.Quality.ConfirmedPhone)
+	if phone == "" {
+		s.Log.Debug("CallQualityEnriched without confirmed_phone; skipping note",
+			zap.String("conversation_id", d.ConversationID))
+		return nil
+	}
+	// Prefer the top-level avg_sentiment when the nested one is absent.
+	q := *d.Quality
+	if q.AvgSentiment == nil && d.AvgSentiment != nil {
+		q.AvgSentiment = d.AvgSentiment
+	}
+	tenantUUID := parseUUID(evt.TenantID)
+	body := twentyc.CallSummaryNote(q)
+	if d.ConversationID != "" {
+		m, err := s.Map.Get(ctx, KindQualityNote, d.ConversationID, tenantUUID)
+		if err != nil && !errors.Is(err, syncmap.ErrNotFound) {
+			return fmt.Errorf("lookup quality_note mapping: %w", err)
+		}
+		if err == nil && m.TwentyID != "" {
+			if err := s.Twenty.UpdateNote(ctx, m.TwentyID, twentyc.CallSummaryNoteTitle, body); err != nil {
+				return fmt.Errorf("patch call summary note with sentiment: %w", err)
+			}
+			s.Log.Info("AI call summary note enriched with sentiment",
+				zap.String("note_id", m.TwentyID),
+				zap.String("conversation_id", d.ConversationID))
+			return nil
+		}
+	}
+	personID, err := s.resolvePersonForCall(ctx, phone, tenantUUID)
+	if err != nil {
+		return fmt.Errorf("resolve person for call summary: %w", err)
+	}
+	if personID == "" {
+		s.Log.Info("no Twenty person for confirmed phone; enriched note skipped",
+			zap.String("conversation_id", d.ConversationID))
+		return nil
+	}
+	noteID, err := s.Twenty.CreateNote(ctx, twentyc.CallSummaryNoteTitle, body, personID)
+	if err != nil {
+		return fmt.Errorf("create enriched call summary note: %w", err)
+	}
+	if err := s.rememberQualityNote(ctx, d.ConversationID, noteID, tenantUUID); err != nil {
+		return err
+	}
+	s.Log.Info("AI call summary note added (sentiment-enriched)",
+		zap.String("person_id", personID),
+		zap.String("note_id", noteID),
+		zap.String("conversation_id", d.ConversationID),
+		zap.Int("turn_sentiment_count", d.TurnSentimentCount))
+	return nil
+}
+
+// qualityNoteExists reports whether a call-summary note was already handled
+// (either path) for this conversation.
+func (s *Syncer) qualityNoteExists(ctx context.Context, conversationID string, tenantUUID *uuid.UUID) (bool, error) {
+	if conversationID == "" {
+		return false, nil
+	}
+	m, err := s.Map.Get(ctx, KindQualityNote, conversationID, tenantUUID)
+	if errors.Is(err, syncmap.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("lookup quality_note mapping: %w", err)
+	}
+	return m.TwentyID != "", nil
+}
+
+// rememberQualityNote records conversation id -> Twenty note id. A failure
+// is returned (retried) rather than swallowed: losing the mapping risks a
+// duplicate note on the other path, which is worse than a redelivery.
+func (s *Syncer) rememberQualityNote(ctx context.Context, conversationID, noteID string, tenantUUID *uuid.UUID) error {
+	if conversationID == "" {
+		return nil
+	}
+	if err := s.Map.Put(ctx, KindQualityNote, conversationID, noteID, tenantUUID); err != nil {
+		return fmt.Errorf("record quality_note mapping: %w", err)
+	}
 	return nil
 }
 
