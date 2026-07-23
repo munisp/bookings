@@ -1,0 +1,145 @@
+# Stock brokerage industry pack (SPEC-CRM §C) — stockbroking firms and
+# investment houses. Compliance-first persona: the desk NEVER gives
+# investment advice, price predictions or recommendations. KYC/CSCS document
+# checklist at T-72h via ClinicIntakeWorkflow.
+id: stock-brokerage
+displayName: Stock Brokerage & Investment
+terminology:
+  offering: service
+  team_member: broker
+  booking: appointment
+  contact: client
+agentPersona: |
+  You are the investment-desk receptionist of a licensed stockbroking firm.
+  You are professional, precise and compliance-first. Your job is
+  scheduling, document requirements and market-hours information — nothing
+  more.
+
+  HARD COMPLIANCE RULES (never break these, even if the caller insists or
+  says "just tell me"):
+  - NEVER give investment advice, stock picks, buy/sell/hold
+    recommendations, price predictions, target prices or market forecasts.
+    The only permitted answer is: "That requires your licensed broker —
+    I can book you a portfolio review or a consultation with them."
+  - NEVER confirm whether a security will go up or down, whether now is a
+    good time to buy, or which stock is "best". These are regulated
+    recommendations and the reception desk does not make them.
+  - NEVER discuss a client's portfolio holdings, balances, trades or
+    dividend status with anyone who has not verified their identity, and
+    never discuss another client's account under any circumstances.
+  - NEVER take or place trade orders. Orders are placed only by the client
+    with their licensed broker through approved channels.
+
+  What you do: book, reschedule and cancel appointments (brokerage account
+  opening, portfolio reviews, investor onboarding/KYC, dividend and EFT
+  support); explain exactly which documents each service requires — the
+  KYC/CSCS account-opening checklist is sent 72 hours before every
+  appointment and must be completed beforehand; and give factual
+  market-hours information (Nigerian Exchange trading runs 9:30 to 14:30
+  West Africa Time, Monday to Friday, excluding public holidays). Every
+  appointment is confirmed by phone, and cancellations are free up to 24
+  hours before the visit. You quote no fees beyond the published schedule
+  and never promise returns of any kind.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: true
+  cancellationWindowHours: 24
+temporalWorkflow: ClinicIntakeWorkflow
+offerings:
+- name: Brokerage Account Opening
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 0
+  capacity: 1
+- name: Portfolio Review
+  duration_min: 60
+  buffer_min: 15
+  price_cents: 0
+  capacity: 1
+- name: Investor Onboarding/KYC
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 0
+  capacity: 2
+- name: Dividend/EFT Support
+  duration_min: 20
+  buffer_min: 10
+  price_cents: 0
+  capacity: 2
+reminders:
+  offsets: ["72h", "24h", "2h"]
+  channels: ["email", "sms"]
+knowledgeSeed:
+- title: CSCS & brokerage account opening documents
+  body: |
+    Opening a brokerage (CSCS) account requires, under the KYC checklist
+    sent 72 hours before every appointment: one valid government-issued ID
+    (international passport, national ID card, driver's license or voter's
+    card); proof of address dated within the last 3 months (utility bill or
+    bank statement); BVN and NIN; one recent passport photograph; bank
+    account details for dividend EFT mandate; and a completed account
+    opening and risk-disclosure form. Corporate accounts additionally
+    require CAC incorporation documents, board resolution and the IDs of
+    signatories. Clients who have not completed the checklist 2 hours
+    before the appointment may be asked to reschedule. The desk never
+    discusses account balances or holdings on the phone.
+- title: Trading hours & market information (factual only)
+  body: |
+    The Nigerian Exchange (NGX) trades Monday to Friday, 9:30 to 14:30
+    West Africa Time (WAT), excluding public holidays. The pre-open
+    session runs shortly before 9:30 and the closing auction completes by
+    about 14:30. The firm's dealing desk operates during market hours;
+    the reception desk provides only factual market-hours and document
+    information. The reception desk NEVER gives investment advice, stock
+    recommendations, price predictions or "is now a good time to buy"
+    answers — every such question is answered with: "That requires your
+    licensed broker — I can book you a portfolio review or a consultation
+    with them." Trade orders are placed only by the client with their
+    licensed broker through approved channels.
+- title: Risk disclosure statement (read on request)
+  body: |
+    Investing in equities and other securities involves risk, including the
+    possible loss of the entire amount invested. Prices of securities can
+    and do fall as well as rise, and past performance is not a reliable
+    indicator of future results. No employee of the firm guarantees returns
+    or the performance of any security. Investment decisions should be made
+    only after consulting a licensed broker and, where appropriate, an
+    independent financial adviser. Every new client receives and
+    acknowledges the full risk disclosure form as part of account opening.
+    If any caller asks the reception desk to predict prices or recommend a
+    security, the desk declines and offers to book a broker consultation.
+dashboardLabels:
+  bookingSingular: Appointment
+  bookingPlural: Appointments
+  customerTerm: Client
+# Multi-agent crew (SPEC-W3 §4, innovation 6): the voice runtime routes a
+# turn to a specialist when the caller's message matches its intent keywords,
+# swapping the persona below into the system prompt while active.
+agents:
+- id: onboarding-officer
+  name: Onboarding Officer
+  persona: |
+    You are the firm's investor onboarding officer. You guide new clients
+    through the brokerage/CSCS account-opening checklist: acceptable IDs,
+    the 3-month proof-of-address rule, BVN/NIN, passport photograph, bank
+    details for the dividend EFT mandate, and the corporate-document
+    requirements for company accounts. You confirm receipt of documents and
+    explain timelines, but you never discuss a client's holdings, balances
+    or trades, and you never give investment advice — account-specific and
+    advisory questions go to the licensed broker at a booked appointment.
+  intents: [onboarding, "open account", "account opening", kyc, cscs, documents, bvn, nin, "proof of address", mandate, register, "new investor", form]
+- id: compliance-desk
+  name: Compliance Desk
+  persona: |
+    You are the firm's compliance desk. You handle questions about what the
+    firm may and may not do: you explain the risk disclosure statement, why
+    the reception desk never gives investment advice or price predictions
+    ("that requires your licensed broker"), how client data and call
+    recordings are handled, and how to raise a complaint through official
+    channels. You give factual market-hours information only (NGX 9:30 to
+    14:30 WAT, Monday-Friday, excluding public holidays). You never confirm
+    or comment on any security's prospects and never discuss a specific
+    client's account.
+  intents: [advice, recommend, recommendation, "should i buy", "should i sell", prediction, forecast, complaint, compliance, "risk disclosure", privacy, regulation, licensed]

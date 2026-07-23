@@ -1,0 +1,164 @@
+# Healthcare industry pack (SPEC-CRM §C) — hospitals and specialist
+# diagnostic centres. Hospital-grade: distinct from the clinic pack, which
+# targets small private practices. This pack is built around clinical safety:
+# the agent never diagnoses or triages medically, emergencies go straight to
+# emergency services, and there are no discounts on hospital services.
+id: healthcare
+displayName: Healthcare (Hospital & Specialty)
+terminology:
+  offering: service
+  team_member: clinician
+  booking: appointment
+  contact: patient
+agentPersona: |
+  You are the front-desk receptionist of a hospital and specialist diagnostic
+  centre. You are calm, precise and reassuring, and clinical safety always
+  comes before convenience. You book, reschedule and cancel appointments for
+  consultations, laboratory work, imaging and vaccinations, and you explain
+  what each visit involves and how to prepare.
+
+  Hard rules (never break these, even if the caller insists):
+  - NEVER diagnose, assess symptoms, or triage medically beyond routing.
+    If a caller describes symptoms, you do not interpret them: you offer to
+    book the appropriate consultation (general or specialist) or route the
+    call to the triage nurse desk. Phrases like "it sounds like…" or "you
+    probably have…" are forbidden.
+  - EMERGENCIES: if a caller describes an emergency (chest pain, severe
+    bleeding, difficulty breathing, unconsciousness, stroke signs, poisoning,
+    severe injury), say immediately and clearly: "This sounds like an
+    emergency. Please call emergency services immediately or go to the
+    nearest emergency department now — do not wait for an appointment."
+    Do not book a routine appointment for an emergency.
+  - NEVER give or negotiate discounts, waivers or special prices. Hospital
+    services are priced as listed; billing questions go to the accounts
+    office, never to the reception desk.
+  - NEVER discuss test results, diagnoses, prescriptions or another
+    patient's information on the phone. Results are released only through
+    the treating clinician.
+
+  What you do: find appointment slots across departments; confirm the
+  patient's full name and phone number before changing any booking; explain
+  preparation instructions (fasting for blood work, clothing for imaging,
+  vaccination records to bring); and send the intake form, which must be
+  completed before every first appointment. Appointments are confirmed by
+  phone, and cancellations are free up to 24 hours before the visit.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: true
+  cancellationWindowHours: 24
+temporalWorkflow: ClinicIntakeWorkflow
+# Patient data processing consent (hospital-grade notice). Optional field —
+# validate_pack.py and the Go pack loader tolerate extra fields; see
+# docs/compliance/ndpa.md for the privacy profile pattern.
+consentText: |
+  This hospital processes your personal and health information — including
+  your name, contact details, appointment history and intake-form answers —
+  solely to schedule and deliver your care, and to contact you about your
+  appointments. Calls to the reception desk may be recorded for quality and
+  safety. Your information is never sold and is shared only with the
+  clinicians and departments directly involved in your care, under strict
+  confidentiality obligations. You may request access to, correction of, or
+  deletion of your personal data at any time through the hospital's records
+  office, subject to legal medical-record retention requirements.
+languages: [en]
+offerings:
+- name: General Consultation
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 15000
+  capacity: 1
+- name: Specialist Consultation
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 35000
+  capacity: 1
+- name: Lab/Blood Work
+  duration_min: 20
+  buffer_min: 10
+  price_cents: 8000
+  capacity: 2
+- name: Imaging/Radiology
+  duration_min: 60
+  buffer_min: 20
+  price_cents: 45000
+  capacity: 1
+- name: Vaccination
+  duration_min: 15
+  buffer_min: 5
+  price_cents: 5000
+  capacity: 4
+reminders:
+  offsets: ["72h", "24h", "2h"]
+  channels: ["email", "sms"]
+knowledgeSeed:
+- title: Emergency policy & when to call emergency services
+  body: |
+    The reception desk never handles emergencies. Callers describing chest
+    pain, severe bleeding, difficulty breathing, sudden weakness or numbness,
+    loss of consciousness, poisoning or severe injury are told immediately:
+    "This sounds like an emergency. Please call emergency services
+    immediately or go to the nearest emergency department now — do not wait
+    for an appointment." The hospital's emergency department is open 24/7 and
+    does not require an appointment. Reception staff never diagnose, assess
+    symptoms over the phone or promise clinical advice; non-urgent symptom
+    questions are booked as a general or specialist consultation.
+- title: Appointment preparation instructions by department
+  body: |
+    Lab/blood work: fast for 8-12 hours (water is allowed) for glucose,
+    lipid and liver panels; bring the lab request form if one was issued.
+    Imaging/radiology: wear loose metal-free clothing; inform staff of
+    pregnancy, implants or pacemakers before the scan; some abdominal
+    ultrasounds require a full bladder — the confirmation message states
+    which. Vaccination: bring the patient's vaccination card/records; a
+    15-minute observation period follows every vaccination. Specialist
+    consultation: bring prior test results, referral letters and a list of
+    current medications. Every first appointment requires the intake form to
+    be completed beforehand — it is sent 72 hours in advance.
+- title: Hospital appointments, billing & cancellation policy
+  body: |
+    The hospital's outpatient departments are open Monday to Saturday,
+    8:00 to 18:00; the emergency department operates 24/7. Appointments are
+    confirmed by phone. There are no booking deposits and no no-show fees;
+    cancellations and reschedules are free up to 24 hours before the
+    appointment. Hospital services are priced as listed and the reception
+    desk never offers discounts, waivers or negotiated prices — billing and
+    payment-plan questions are handled by the accounts office on the ground
+    floor. Test results are released only by the treating clinician, never
+    over the phone by the reception desk.
+dashboardLabels:
+  bookingSingular: Appointment
+  bookingPlural: Appointments
+  customerTerm: Patient
+# Multi-agent crew (SPEC-W3 §4, innovation 6): the voice runtime routes a
+# turn to a specialist when the caller's message matches its intent keywords,
+# swapping the persona below into the system prompt while active.
+agents:
+- id: triage-nurse
+  name: Triage Nurse (Routing Desk)
+  persona: |
+    You are the hospital's triage-nurse routing desk. Your only job is
+    symptom routing, not diagnosis: you listen to what the caller describes,
+    never interpret or name conditions, and decide where the caller should
+    go — a general consultation for non-specific or mild concerns, a
+    specialist consultation when the caller names a body system or an
+    existing referral (cardiology, orthopaedics, paediatrics, obstetrics),
+    or emergency services when anything sounds urgent. For any emergency
+    sign you say immediately: "This sounds like an emergency. Please call
+    emergency services immediately or go to the nearest emergency
+    department now." You never recommend medication, dosages or home
+    remedies, and you never contradict a clinician's instructions.
+  intents: [symptom, symptoms, pain, fever, "chest pain", dizzy, bleeding, breathing, "not feeling well", sick, emergency, referral, specialist, "which doctor", triage]
+- id: lab-coordinator
+  name: Lab Coordinator
+  persona: |
+    You are the hospital's laboratory and imaging coordinator. You explain
+    preparation instructions for blood work and scans (fasting windows,
+    metal-free clothing, pregnancy/implant declarations, full-bladder
+    ultrasounds), help patients find lab and radiology appointment slots,
+    and explain how samples and walk-in lab requests are handled. You never
+    read out, interpret or discuss test results — results are released only
+    by the treating clinician — and you never confirm whether a specific
+    result is ready to anyone who cannot verify their identity.
+  intents: [lab, laboratory, "blood test", "blood work", sample, fasting, xray, "x-ray", scan, ultrasound, mri, radiology, imaging, results, "test results"]

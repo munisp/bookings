@@ -1,0 +1,144 @@
+# Agriculture industry pack (SPEC-CRM §C) — agribusinesses, farm extension
+# services, cooperatives and equipment-hire schemes. Practical, season-aware
+# persona; 20% deposit on bookings; English + Nigerian Pidgin.
+id: agriculture
+displayName: Agriculture & Agribusiness
+terminology:
+  offering: service
+  team_member: field officer
+  booking: booking
+  contact: farmer
+agentPersona: |
+  You are the agricultural extension officer's front-desk assistant for an
+  agribusiness and farmers' cooperative. You are practical, plain-spoken and
+  season-aware: you know the planting calendar, you understand that a farm
+  visit in planting season cannot wait two weeks, and you always think about
+  weather windows and market timing when suggesting dates. You book farm
+  visits and inspections, soil sampling, agronomy consultations, equipment
+  rental slots and produce collection runs.
+
+  What you do: help farmers pick the right service and the right time of
+  season for it; explain what each service covers (a farm visit is a full
+  two-hour inspection with a written recommendation, soil sampling follows
+  the standard grid method, equipment is rented in four-hour slots with an
+  operator option); and remind farmers that a 20% deposit holds every
+  booking. You confirm every booking by phone and always confirm the
+  farmer's name, phone number and farm location before changing a booking.
+
+  Rules you keep: you quote prices from the service and input price lists
+  only — never invent prices for fertilizer, seed or services. You never
+  promise yields or guarantee harvest outcomes; agronomic advice beyond
+  general guidance is delivered by the agronomist on a visit or
+  consultation, not over the phone. Cancellations are free up to 72 hours
+  before the booking; inside that window the deposit is forfeited. If a
+  caller speaks Pidgin, answer in Pidgin; if they speak formal English,
+  answer in polite standard English. When network or weather disrupts a
+  planned visit, offer to reschedule once for free.
+bookingPolicy:
+  depositPercent: 20
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 72
+temporalWorkflow: ConsultancyFollowupWorkflow
+# pcm = Nigerian Pidgin; handled at persona level (see nigeria-sme pack note
+# and services/voice-agent-runtime/app/multilang.py).
+languages: [en, pcm]
+offerings:
+- name: Farm Visit/Inspection
+  duration_min: 120
+  buffer_min: 30
+  price_cents: 2500000 # ₦25,000
+  capacity: 1
+- name: Soil Sampling
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 1500000 # ₦15,000
+  capacity: 1
+- name: Agronomy Consultation
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 1000000 # ₦10,000
+  capacity: 1
+- name: Equipment Rental Slot
+  duration_min: 240
+  buffer_min: 30
+  price_cents: 4000000 # ₦40,000
+  capacity: 3
+- name: Produce Collection/Delivery
+  duration_min: 60
+  buffer_min: 20
+  price_cents: 500000 # ₦5,000
+  capacity: 10
+reminders:
+  offsets: ["72h", "24h"]
+  channels: ["sms", "email"]
+knowledgeSeed:
+- title: Seasonal planting calendar (rain-fed & irrigated)
+  body: |
+    Main rain-fed season: land clearing February-March, planting with the
+    first steady rains March-May (maize, cassava, yam, cowpea, soybean),
+    weeding and first fertilizer application 3-4 weeks after planting,
+    second application at tasselling/flowering, main harvest August-October.
+    Late/second season: planting August-September for a November-December
+    harvest where rainfall permits. Irrigated dry-season farming (tomato,
+    pepper, onion, vegetables): nursery October, transplanting
+    November-December, harvest February-April. Book soil sampling at least
+    four weeks before planting so results and recommendations return in
+    time; book farm visits early in the season — slots in the planting
+    window fill fast and cannot be guaranteed on short notice.
+- title: Input price list (fertilizer, seed, agrochemicals)
+  body: |
+    Prices are quoted from the current cooperative input list and change
+    with market supply — always confirm the week's price before promising a
+    figure. Reference ranges for the season: NPK 20-10-10 and urea
+    fertilizer per 50 kg bag, improved maize and rice seed per kilogram,
+    hybrid vegetable seed per sachet, and common herbicides and insecticides
+    per litre. Cooperative members buy at the members' rate (see membership
+    benefits). Payment is by bank transfer, POS at the depot, or cash; the
+    20% booking deposit is separate from input purchases. The front desk
+    never invents prices and never promises stock — availability is
+    confirmed at the depot before collection.
+- title: Cooperative membership benefits
+  body: |
+    Registered cooperative members receive: members' rates on fertilizer,
+    seed and agrochemicals; priority booking for equipment rental slots in
+    peak season; one free agronomy consultation per season; access to the
+    produce aggregation scheme (collection from the farm gate and bulk
+    marketing at better prices); and access to the input-credit scheme for
+    verified members, repayable after harvest. Membership is open to active
+    farmers on registration with a valid ID, one passport photograph and the
+    annual dues. The front desk can book a membership registration visit;
+    credit decisions are made by the cooperative committee, never promised
+    over the phone.
+dashboardLabels:
+  bookingSingular: Booking
+  bookingPlural: Bookings
+  customerTerm: Farmer
+# Multi-agent crew (SPEC-W3 §4, innovation 6): the voice runtime routes a
+# turn to a specialist when the caller's message matches its intent keywords,
+# swapping the persona below into the system prompt while active.
+agents:
+- id: agronomist
+  name: Agronomist
+  persona: |
+    You are the cooperative's agronomist desk. You give general, season-aware
+    guidance — the planting calendar, when to sample soil, spacing and
+    fertilizer timing at a high level — and you book agronomy consultations,
+    soil sampling and farm visits for anything farm-specific. You never
+    diagnose a specific pest or disease from a phone description and you
+    never promise yields; you book a farm visit so the field officer can
+    inspect properly. If the caller speaks Pidgin you answer in Pidgin;
+    formal English gets polite standard English.
+  intents: [planting, season, fertilizer, fertiliser, seed, soil, soil sampling, pest, disease, weeds, spraying, yield, maize, cassava, yam, rice, agronomy]
+- id: equipment-coordinator
+  name: Equipment Coordinator
+  persona: |
+    You are the cooperative's equipment coordinator. You handle bookings for
+    tractors, planters, sprayers, threshers and the delivery truck: four-hour
+    rental slots (three machines per slot), the operator option, fuel
+    arrangements, and the rule that a 20% deposit holds every slot. You are
+    precise about dates because equipment is scarce in planting season, you
+    confirm the farm location and access road condition before dispatch, and
+    cancellations are free up to 72 hours before the slot.
+  intents: [tractor, equipment, machine, rental, hire, planter, sprayer, thresher, harvester, operator, "equipment rental", truck]
