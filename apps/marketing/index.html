@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenDesk — Open-Source AI Receptionist Platform</title>
+  <meta name="description" content="OpenDesk is a fully open-source, self-hosted AI receptionist platform: voice and text concierge, 30 industry vertical packs, Twenty CRM sync, booking with payments, usage-based billing, GDPR/NDPA friendly.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="OpenDesk — Open-Source AI Receptionist Platform">
+  <meta property="og:description" content="Voice + text AI receptionist for every business. 30 industry packs, Twenty CRM sync, booking & QR payments, usage-based billing. Self-hosted, open models, GDPR/NDPA friendly.">
+  <meta property="og:url" content="https://github.com/munisp/bookings">
+  <meta name="theme-color" content="#faf5ec">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header" id="top">
+    <nav class="nav container" aria-label="Primary">
+      <a class="brand" href="#top" aria-label="OpenDesk home">
+        <svg class="brand-mark" width="28" height="28" viewBox="0 0 28 28" aria-hidden="true" focusable="false">
+          <rect x="1.5" y="1.5" width="25" height="25" rx="6" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M8 15.5c0-3.6 2.7-6.5 6-6.5s6 2.9 6 6.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="14" cy="18.5" r="2" fill="currentColor"/>
+        </svg>
+        <span>OpenDesk</span>
+      </a>
+      <details class="nav-toggle">
+        <summary aria-label="Toggle navigation menu">
+          <svg class="icon-menu" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <svg class="icon-close" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </summary>
+        <ul class="nav-links">
+          <li><a href="#features">Features</a></li>
+          <li><a href="#verticals">Verticals</a></li>
+          <li><a href="#how-it-works">How it works</a></li>
+          <li><a href="#pricing">Pricing</a></li>
+          <li><a class="nav-cta" href="https://github.com/munisp/bookings" rel="noopener">GitHub</a></li>
+        </ul>
+      </details>
+    </nav>
+  </header>
+
+  <main id="main">
+
+    <!-- Hero -->
+    <section class="hero">
+      <div class="container hero-inner">
+        <p class="eyebrow">Open source &middot; Self-hosted &middot; Open models</p>
+        <h1>The open-source AI receptionist for every business</h1>
+        <p class="hero-sub">
+          OpenDesk gives every appointment-based business a branded front desk with a
+          <strong>voice + text AI concierge</strong> that answers questions and books, reschedules,
+          and cancels appointments live — over the phone, WhatsApp, Telegram, web chat, and SMS.
+        </p>
+        <div class="hero-ctas">
+          <a class="btn btn-primary" href="https://github.com/munisp/bookings" rel="noopener">
+            <svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+            </svg>
+            View on GitHub
+          </a>
+          <a class="btn btn-secondary" href="mailto:demo@opendesk.example?subject=OpenDesk%20demo%20request">Book a demo</a>
+        </div>
+        <ul class="hero-badges" aria-label="Platform highlights">
+          <li>30 industry vertical packs</li>
+          <li>Zero proprietary dependencies</li>
+          <li>GDPR &amp; NDPA profiles</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Middleware strip -->
+    <section class="strip" aria-labelledby="middleware-heading">
+      <div class="container">
+        <h2 id="middleware-heading" class="strip-title">Built on a proven open-source middleware backbone</h2>
+        <ul class="logo-strip">
+          <li>Kafka</li>
+          <li>Dapr</li>
+          <li>Temporal</li>
+          <li>PostgreSQL</li>
+          <li>Keycloak</li>
+          <li>Permify</li>
+          <li>Redis</li>
+          <li>OpenSearch</li>
+          <li>APISIX</li>
+          <li>OpenAppSec</li>
+          <li>TigerBeetle</li>
+          <li>Mojaloop</li>
+          <li>Lakehouse <span class="muted">(Iceberg &middot; Trino &middot; Spark)</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Omnichannel strip -->
+    <section class="strip strip-alt" aria-labelledby="channels-heading">
+      <div class="container">
+        <h2 id="channels-heading" class="strip-title">One receptionist, every channel your customers already use</h2>
+        <ul class="channel-strip">
+          <li>
+            <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            Voice
+          </li>
+          <li>
+            <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 9.5c.5 2.5 3 5 5.5 5.5l1-1.5-2-1-1 .5c-.8-.5-1.5-1.2-2-2l.5-1-1-2L9 9.5Z" fill="currentColor"/></svg>
+            WhatsApp
+          </li>
+          <li>
+            <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 4 3 11.5l5.5 2L10 19l3-3 4.5 3L21 4Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+            Telegram
+          </li>
+          <li>
+            <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 21h8M12 17v4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            Web chat
+          </li>
+          <li>
+            <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6" y="2.5" width="12" height="19" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10 18.5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            SMS <span class="muted">via Termii &middot; Africa&rsquo;s Talking &middot; Twilio</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Feature grid -->
+    <section class="section" id="features" aria-labelledby="features-heading">
+      <div class="container">
+        <p class="eyebrow">Platform</p>
+        <h2 id="features-heading">Everything a front desk needs — nothing you can&rsquo;t audit</h2>
+        <p class="section-sub">Services in Go, Rust, Python, and TypeScript. Every layer is open source and self-hostable.</p>
+        <div class="feature-grid">
+          <article class="card">
+            <svg class="card-icon" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 8a5 5 0 0 1 10 0M17 16a5 5 0 0 1-10 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M12 3v3M12 18v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <h3>Bidirectional Twenty CRM sync</h3>
+            <p>Contacts, bookings, and conversations flow into a self-hosted Twenty CRM — forward event sync plus reverse webhooks with echo suppression.</p>
+          </article>
+          <article class="card">
+            <svg class="card-icon" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="8" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="3" width="8" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="3" y="13" width="8" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="13" width="8" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+            <h3>30 industry vertical packs</h3>
+            <p>From salon to law enforcement — each pack ships terminology, booking policy, agent persona, and workflow variants. Developing-market packs included.</p>
+          </article>
+          <article class="card">
+            <svg class="card-icon" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3 10h18M8 3v4M16 3v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M8 15h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <h3>Booking engine with payments</h3>
+            <p>Live availability, deposits and payments at booking time, Temporal-saga durability with compensation, and idempotent commands end to end.</p>
+          </article>
+          <article class="card">
+            <svg class="card-icon" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4h6v6H4zM14 4h6v6H4zM4 14h6v6H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 17h3v3h-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <h3>QR-code invoice payments</h3>
+            <p>Customers scan and pay invoices by QR — Paystack payment links where available, with a static EMV merchant-payload fallback everywhere else.</p>
+          </article>
+          <article class="card">
+            <svg class="card-icon" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 19V5M4 19h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M8 16v-5M12 16V8M16 16v-3M20 16V6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <h3>Usage metering &amp; billing</h3>
+            <p>A Rust billing engine meters usage from Kafka events, rates it against plan quotas, issues invoices, and posts to a TigerBeetle-compatible double-entry ledger with Mojaloop rails.</p>
+          </article>
+          <article class="card">
+            <svg class="card-icon" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <h3>Open-model AI, your hardware</h3>
+            <p>Ollama Qwen3 by default with a MiniMax fallback, faster-whisper speech-to-text, Piper text-to-speech, and LiveKit for real-time voice.</p>
+          </article>
+          <article class="card">
+            <svg class="card-icon" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <h3>GDPR &amp; NDPA compliance</h3>
+            <p>Compliance profiles for EU GDPR and Nigeria&rsquo;s NDPA, row-level multi-tenant isolation in Postgres, and data-residency-friendly self-hosting.</p>
+          </article>
+          <article class="card">
+            <svg class="card-icon" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="16.5" cy="9.5" r="2.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 19c.6-3 2.5-4.5 4.5-4.5s3.9 1.5 4.5 4.5M14 19c.4-2.2 1.6-3.4 3-3.4 1.3 0 2.3 1.1 2.7 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <h3>Role-based KPI dashboards</h3>
+            <p>Owner, admin, analyst, billing, staff, and viewer roles — backed by Keycloak and Permify — with white-label branding per tenant.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Verticals showcase -->
+    <section class="section section-alt" id="verticals" aria-labelledby="verticals-heading">
+      <div class="container">
+        <p class="eyebrow">Vertical packs</p>
+        <h2 id="verticals-heading">30 industries, ready on day one</h2>
+        <p class="section-sub">Every pack bundles the terminology, policies, persona, and workflows for its industry — filter by sector.</p>
+
+        <div class="chips" role="group" aria-label="Filter verticals by sector">
+          <button class="chip is-active" type="button" data-filter="all" aria-pressed="true">All</button>
+          <button class="chip" type="button" data-filter="health" aria-pressed="false">Health</button>
+          <button class="chip" type="button" data-filter="finance" aria-pressed="false">Finance</button>
+          <button class="chip" type="button" data-filter="public-safety" aria-pressed="false">Public Safety</button>
+          <button class="chip" type="button" data-filter="education" aria-pressed="false">Education</button>
+          <button class="chip" type="button" data-filter="commerce" aria-pressed="false">Commerce</button>
+          <button class="chip" type="button" data-filter="field-services" aria-pressed="false">Field Services</button>
+          <button class="chip" type="button" data-filter="developing" aria-pressed="false">Developing Markets</button>
+        </div>
+
+        <ul class="vertical-grid" id="vertical-grid">
+          <li class="vertical-card" data-group="health"><h3>Clinic</h3><p>Appointment intake, triage-style FAQs, and rescheduling for private clinics.</p></li>
+          <li class="vertical-card" data-group="health"><h3>Healthcare</h3><p>Multi-provider scheduling, referrals, and patient follow-up calls.</p></li>
+          <li class="vertical-card" data-group="health"><h3>Pharmacy</h3><p>Refill reminders, stock enquiries, and consultation bookings.</p></li>
+
+          <li class="vertical-card" data-group="finance"><h3>Banking</h3><p>Branch appointments, account-service routing, and compliant call handling.</p></li>
+          <li class="vertical-card" data-group="finance"><h3>Microfinance</h3><p>Loan-officer meetings, repayment reminders, and field-visit scheduling.</p></li>
+          <li class="vertical-card" data-group="finance"><h3>Insurance</h3><p>Claims intake appointments, policy questions, and agent callbacks.</p></li>
+          <li class="vertical-card" data-group="finance"><h3>Stock brokerage</h3><p>Client onboarding sessions and advisor meeting scheduling.</p></li>
+
+          <li class="vertical-card" data-group="public-safety"><h3>Government</h3><p>Citizen-service bookings across departments with accessibility in mind.</p></li>
+          <li class="vertical-card" data-group="public-safety"><h3>Law enforcement</h3><p>Non-emergency crime-report intake with reference numbers — emergencies always routed to the national emergency number first.</p></li>
+          <li class="vertical-card" data-group="public-safety"><h3>Neighborhood watch</h3><p>Suspicious-activity reports, patrol-shift signup, and community meetings.</p></li>
+          <li class="vertical-card" data-group="public-safety"><h3>Civic services</h3><p>311-style issue reporting — potholes, streetlights, waste, leaks — as trackable tickets.</p></li>
+          <li class="vertical-card" data-group="public-safety"><h3>Legal aid</h3><p>Intake interviews and clinic appointments for legal-aid organisations.</p></li>
+
+          <li class="vertical-card" data-group="education"><h3>Education</h3><p>Parent-teacher meetings, admissions calls, and campus-visit scheduling.</p></li>
+          <li class="vertical-card" data-group="education"><h3>Vocational training</h3><p>Course enrolment, skills assessments, and workshop bookings.</p></li>
+
+          <li class="vertical-card" data-group="commerce"><h3>Salon &amp; barbershop</h3><p>The classic: stylist bookings, deposits, and no-show reduction.</p></li>
+          <li class="vertical-card" data-group="commerce"><h3>E-commerce</h3><p>Order-status enquiries, returns intake, and support callbacks.</p></li>
+          <li class="vertical-card" data-group="commerce"><h3>Fashion</h3><p>Fitting appointments, bespoke orders, and collection launches.</p></li>
+          <li class="vertical-card" data-group="commerce"><h3>Consultancy</h3><p>Discovery calls, engagement kick-offs, and client check-ins.</p></li>
+          <li class="vertical-card" data-group="commerce"><h3>Support desk</h3><p>AI first-line support with warm handoff to human agents.</p></li>
+          <li class="vertical-card" data-group="commerce"><h3>Travel</h3><p>Itinerary enquiries, booking changes, and agent escalation.</p></li>
+          <li class="vertical-card" data-group="commerce"><h3>Entertainment</h3><p>Venue bookings, event enquiries, and ticketing support.</p></li>
+          <li class="vertical-card" data-group="commerce"><h3>Recruitment</h3><p>Candidate screening calls and interview scheduling.</p></li>
+          <li class="vertical-card" data-group="commerce"><h3>Religious organisations</h3><p>Counselling appointments, event coordination, and member enquiries.</p></li>
+
+          <li class="vertical-card" data-group="field-services"><h3>ISP installer</h3><p>Installation and fault-visit scheduling with technician routing.</p></li>
+          <li class="vertical-card" data-group="field-services"><h3>Logistics</h3><p>Pickup scheduling, delivery-status calls, and depot coordination.</p></li>
+          <li class="vertical-card" data-group="field-services"><h3>Transportation</h3><p>Fleet bookings, charter enquiries, and schedule information.</p></li>
+
+          <li class="vertical-card" data-group="developing"><h3>Agri-input</h3><p>Seed and fertiliser orders, agronomist calls, and seasonal reminders.</p></li>
+          <li class="vertical-card" data-group="developing"><h3>Agriculture</h3><p>Extension-service bookings and market-information lines.</p></li>
+          <li class="vertical-card" data-group="developing"><h3>PAYG solar &amp; utilities</h3><p>Pay-as-you-go account support, payment reminders, and installer visits.</p></li>
+          <li class="vertical-card" data-group="developing"><h3>Nigeria SME</h3><p>A general-purpose pack tuned for Nigerian SMEs — Termii / Africa&rsquo;s Talking SMS built in.</p></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section class="section" id="how-it-works" aria-labelledby="how-heading">
+      <div class="container">
+        <p class="eyebrow">How it works</p>
+        <h2 id="how-heading">Live in three steps</h2>
+        <ol class="steps">
+          <li class="step">
+            <span class="step-num" aria-hidden="true">1</span>
+            <h3>Pick your pack &amp; brand it</h3>
+            <p>Choose from 30 vertical packs, apply your logo and colours with the white-label theme editor, and publish your booking page.</p>
+          </li>
+          <li class="step">
+            <span class="step-num" aria-hidden="true">2</span>
+            <h3>Connect channels &amp; CRM</h3>
+            <p>Switch on voice, WhatsApp, Telegram, web chat, and SMS — and sync everything bidirectionally with your self-hosted Twenty CRM.</p>
+          </li>
+          <li class="step">
+            <span class="step-num" aria-hidden="true">3</span>
+            <h3>Let the AI front desk work</h3>
+            <p>The concierge answers questions, books with deposits, and takes QR payments — while role-based dashboards track bookings, revenue, and sentiment.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- Pricing -->
+    <section class="section section-alt" id="pricing" aria-labelledby="pricing-heading">
+      <div class="container">
+        <p class="eyebrow">Pricing</p>
+        <h2 id="pricing-heading">Start free, scale with usage</h2>
+        <p class="section-sub">Paid plans are metered by the platform&rsquo;s own built-in billing engine — usage metering, included quotas, invoices, and QR payment links come with the product.</p>
+        <div class="pricing-grid">
+          <article class="price-card">
+            <h3>Free</h3>
+            <p class="price">$0 <span class="price-note">self-hosted</span></p>
+            <ul>
+              <li>The entire platform, open source</li>
+              <li>All 30 vertical packs</li>
+              <li>Unlimited self-hosted tenants</li>
+              <li>Community support via GitHub</li>
+            </ul>
+            <a class="btn btn-secondary" href="https://github.com/munisp/bookings" rel="noopener">Clone the repo</a>
+          </article>
+          <article class="price-card price-card-featured">
+            <p class="badge">Most popular</p>
+            <h3>Standard</h3>
+            <p class="price">Usage-based <span class="price-note">+ included quotas</span></p>
+            <ul>
+              <li>Everything in Free, hosted for you</li>
+              <li>Metered calls, messages &amp; bookings</li>
+              <li>Invoices with QR payment links</li>
+              <li>Email support</li>
+            </ul>
+            <a class="btn btn-primary" href="mailto:demo@opendesk.example?subject=OpenDesk%20Standard%20plan">Book a demo</a>
+          </article>
+          <article class="price-card">
+            <h3>Pro</h3>
+            <p class="price">Usage-based <span class="price-note">higher quotas</span></p>
+            <ul>
+              <li>Everything in Standard</li>
+              <li>Higher included usage quotas</li>
+              <li>White-label &amp; custom domains</li>
+              <li>Priority support &amp; onboarding</li>
+            </ul>
+            <a class="btn btn-secondary" href="mailto:demo@opendesk.example?subject=OpenDesk%20Pro%20plan">Talk to us</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Open-source CTA banner -->
+    <section class="cta-banner" aria-labelledby="cta-heading">
+      <div class="container cta-inner">
+        <h2 id="cta-heading">Open source, all the way down</h2>
+        <p>Go, Rust, Python, and TypeScript services over Kafka, Temporal, Postgres, and a TigerBeetle-compatible ledger. Audit every line, self-host every layer, and contribute back.</p>
+        <div class="hero-ctas">
+          <a class="btn btn-light" href="https://github.com/munisp/bookings" rel="noopener">Star on GitHub</a>
+          <a class="btn btn-outline-light" href="https://github.com/munisp/bookings" rel="noopener">Read the docs</a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <div>
+        <a class="brand footer-brand" href="#top">
+          <svg class="brand-mark" width="24" height="24" viewBox="0 0 28 28" aria-hidden="true" focusable="false">
+            <rect x="1.5" y="1.5" width="25" height="25" rx="6" fill="none" stroke="currentColor" stroke-width="2"/>
+            <path d="M8 15.5c0-3.6 2.7-6.5 6-6.5s6 2.9 6 6.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="14" cy="18.5" r="2" fill="currentColor"/>
+          </svg>
+          <span>OpenDesk</span>
+        </a>
+        <p class="footer-tag">The open-source AI receptionist platform.</p>
+      </div>
+      <nav aria-label="Footer — product">
+        <h2 class="footer-heading">Product</h2>
+        <ul>
+          <li><a href="#features">Features</a></li>
+          <li><a href="#verticals">Verticals</a></li>
+          <li><a href="#pricing">Pricing</a></li>
+        </ul>
+      </nav>
+      <nav aria-label="Footer — resources">
+        <h2 class="footer-heading">Resources</h2>
+        <ul>
+          <li><a href="https://github.com/munisp/bookings" rel="noopener">GitHub repository</a></li>
+          <li><a href="#how-it-works">How it works</a></li>
+          <li><a href="mailto:demo@opendesk.example?subject=OpenDesk%20demo%20request">Book a demo</a></li>
+        </ul>
+      </nav>
+    </div>
+    <div class="container footer-bottom">
+      <p>&copy; 2025 The OpenDesk contributors. Open source — see the repository for licence details.</p>
+    </div>
+  </footer>
+
+  <script src="main.js" defer></script>
+</body>
+</html>
