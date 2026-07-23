@@ -21,6 +21,7 @@ import {
 import { useToast } from "@/components/ui/toast";
 import { formatMoney, titleCase } from "@/lib/utils";
 import type { AccountBalance, Payout, PricingRecommendation } from "@/lib/types";
+import { InvoicesPanel } from "./invoices-panel";
 
 export function BillingClient({ orgSlug }: { orgSlug: string }) {
   const { toast } = useToast();
@@ -88,9 +89,11 @@ export function BillingClient({ orgSlug }: { orgSlug: string }) {
     <div>
       <PageHeader
         title="Billing"
-        description="Deposits, revenue and payouts from the TigerBeetle ledger."
+        description="Usage invoices, deposits, revenue and payouts."
       />
       {error ? <ErrorNote message={error} /> : null}
+
+      <InvoicesPanel orgSlug={orgSlug} />
 
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>
