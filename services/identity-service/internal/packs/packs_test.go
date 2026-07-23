@@ -96,6 +96,43 @@ func TestLoadRepoPacks(t *testing.T) {
 	}
 }
 
+// TestLoadRepoNigeriaSMEPack checks that the optional compliance/localisation
+// fields (consentText, languages) of the real industries/nigeria-sme.yaml
+// parse into the Pack struct and pass through to the tenant-facing Summary.
+func TestLoadRepoNigeriaSMEPack(t *testing.T) {
+	const repoPacks = "../../../../industries"
+	if _, err := os.Stat(filepath.Join(repoPacks, "nigeria-sme.yaml")); err != nil {
+		t.Skip("repo industries/nigeria-sme.yaml not found")
+	}
+	reg, err := Load(repoPacks)
+	if err != nil {
+		t.Fatalf("repo packs must load cleanly: %v", err)
+	}
+	p, ok := reg.Get("nigeria-sme")
+	if !ok {
+		t.Fatalf("repo pack %q missing (loaded: %v)", "nigeria-sme", reg.IDs())
+	}
+	wantLangs := []string{"en", "pcm"}
+	if len(p.Languages) != len(wantLangs) {
+		t.Fatalf("languages = %v, want %v", p.Languages, wantLangs)
+	}
+	for i, l := range wantLangs {
+		if p.Languages[i] != l {
+			t.Fatalf("languages = %v, want %v", p.Languages, wantLangs)
+		}
+	}
+	if p.ConsentText == "" {
+		t.Fatal("consentText must be non-empty for nigeria-sme (NDPA notice)")
+	}
+	sum := p.Summary(nil)
+	if sum.ConsentText != p.ConsentText {
+		t.Fatal("Summary must pass consentText through")
+	}
+	if len(sum.Languages) != len(p.Languages) {
+		t.Fatalf("Summary languages = %v, want %v", sum.Languages, p.Languages)
+	}
+}
+
 func TestSummaryMergesTerminologyOverrides(t *testing.T) {
 	reg, err := Load(writePack(t, "test.yaml", validPack))
 	if err != nil {

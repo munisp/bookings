@@ -90,6 +90,12 @@ type Pack struct {
 	// SPEC-W3 §4: optional, validated when present.
 	Agents      []Agent      `yaml:"agents" json:"agents,omitempty"`
 	CustomTools []CustomTool `yaml:"customTools" json:"customTools,omitempty"`
+	// Optional compliance/localisation fields (not validated; see
+	// industries/nigeria-sme.yaml and docs/compliance/ndpa.md). ConsentText
+	// is the data-processing/call-recording notice read to callers;
+	// Languages lists the deployment's supported ISO-639 language codes.
+	ConsentText string   `yaml:"consentText" json:"consentText,omitempty"`
+	Languages   []string `yaml:"languages" json:"languages,omitempty"`
 }
 
 // Summary is the pack projection served by GET /v1/tenants/{slug}: the fields
@@ -104,6 +110,8 @@ type Summary struct {
 	TemporalWorkflow string            `json:"temporalWorkflow"`
 	Agents           []Agent           `json:"agents,omitempty"`
 	CustomTools      []CustomTool      `json:"customTools,omitempty"`
+	ConsentText      string            `json:"consentText,omitempty"`
+	Languages        []string          `json:"languages,omitempty"`
 }
 
 // Summary builds the runtime projection of the pack. terminologyOverrides
@@ -132,6 +140,8 @@ func (p Pack) Summary(terminologyOverrides map[string]string) Summary {
 		TemporalWorkflow: p.TemporalWorkflow,
 		Agents:           p.Agents,
 		CustomTools:      p.CustomTools,
+		ConsentText:      p.ConsentText,
+		Languages:        p.Languages,
 	}
 }
 
