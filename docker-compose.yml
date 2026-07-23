@@ -197,6 +197,23 @@ services:
       AT_FROM: ${AT_FROM:-}
       WHATSAPP_TOKEN: ${WHATSAPP_TOKEN:-}
       WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      # Omnichannel inbound (SPEC-W6 Part A): provider webhooks terminate on
+      # /webhooks/* (public via the APISIX webhooks-messaging route).
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      # Channel identity → tenant/site routing, JSON:
+      # {"whatsapp:<phone_number_id>":{"site_slug":"...","tenant_id":"<uuid>"},
+      #  "telegram:<bot_username>":{"site_slug":"...","tenant_id":"<uuid>"}}
+      CHANNEL_SITE_MAP: ${CHANNEL_SITE_MAP:-}
+      # Inbound bridge upstreams. Empty = via the Dapr sidecar invoke API on
+      # DAPR_HTTP_PORT (requires a daprd sidecar for app-id
+      # messaging-gateway). For sidecar-less dev, uncomment the direct bases:
+      # CONVERSATION_URL: http://conversation:7007
+      # VOICE_RUNTIME_URL: http://voice:7006
+      CONVERSATION_URL: ${CONVERSATION_URL:-}
+      VOICE_RUNTIME_URL: ${VOICE_RUNTIME_URL:-}
     ports:
     - 7011:7011
     networks:
