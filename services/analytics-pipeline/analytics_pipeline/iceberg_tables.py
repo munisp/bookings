@@ -13,15 +13,21 @@ import pyarrow as pa
 from pyiceberg.catalog import Catalog, load_catalog
 from pyiceberg.exceptions import NamespaceAlreadyExistsError, TableAlreadyExistsError
 from pyiceberg.schema import Schema
-from pyiceberg.types import LongType, NestedField, StringType, TimestampType
+from pyiceberg.types import DoubleType, LongType, NestedField, StringType, TimestampType
 
 from .config import Settings
-from .mapping import BOOKING_EVENT_COLUMNS, PAYMENT_EVENT_COLUMNS, TRANSCRIPT_COLUMNS
+from .mapping import (
+    BOOKING_EVENT_COLUMNS,
+    PAYMENT_EVENT_COLUMNS,
+    TRANSCRIPT_COLUMNS,
+    USAGE_EVENT_COLUMNS,
+)
 
 BRONZE_NAMESPACE = "bronze"
 
 _STR = StringType()
 _LONG = LongType()
+_DOUBLE = DoubleType()
 _TS = TimestampType()  # timestamp WITHOUT timezone (naive UTC) — see mapping.py
 
 _COLUMN_TYPES: dict[str, Any] = {
@@ -44,12 +50,16 @@ _COLUMN_TYPES: dict[str, Any] = {
     "text": _STR,
     "ts": _TS,
     "audio_url": _STR,
+    "metric": _STR,
+    "value": _DOUBLE,
+    "meta": _STR,
 }
 
 TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     "booking_events": BOOKING_EVENT_COLUMNS,
     "payment_events": PAYMENT_EVENT_COLUMNS,
     "transcripts": TRANSCRIPT_COLUMNS,
+    "usage_events": USAGE_EVENT_COLUMNS,
 }
 
 
@@ -66,6 +76,8 @@ def iceberg_schema(table: str) -> Schema:
 def _pa_type(iceberg_type: Any) -> pa.DataType:
     if isinstance(iceberg_type, LongType):
         return pa.int64()
+    if isinstance(iceberg_type, DoubleType):
+        return pa.float64()
     if isinstance(iceberg_type, TimestampType):
         return pa.timestamp("us")
     return pa.string()
@@ -97,7 +109,7 @@ def load_rest_catalog(settings: Settings) -> Catalog:
 
 
 def ensure_bronze(catalog: Catalog) -> None:
-    """Create namespace `bronze` and the three raw tables if missing (idempotent)."""
+    """Create namespace `bronze` and the raw tables if missing (idempotent)."""
     try:
         catalog.create_namespace(BRONZE_NAMESPACE)
     except NamespaceAlreadyExistsError:

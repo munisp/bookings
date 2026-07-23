@@ -14,7 +14,7 @@ Kafka topics (CloudEvents 1.0)                     Iceberg REST catalog :8181
 ## How it works
 
 1. One `aiokafka` consumer (group `analytics-pipeline`, `enable_auto_commit=False`)
-   subscribes to the three topics and buffers messages **per topic**.
+   subscribes to the four topics and buffers messages **per topic**.
 2. A buffer flushes when it reaches `BATCH_SIZE` messages **or** ages past
    `FLUSH_INTERVAL` seconds (checked every 1 s).
 3. Flush = map payloads to bronze rows → `pyarrow.Table` → `pyiceberg` `table.append()`
@@ -22,7 +22,7 @@ Kafka topics (CloudEvents 1.0)                     Iceberg REST catalog :8181
    delivery is **at-least-once**; duplicates are removed downstream by the Spark silver
    jobs (`infra/lakehouse/spark/jobs`, dedupe on `event_id` / `(conversation_id, ts, role)`).
 4. On startup the service retries until Kafka and the REST catalog are reachable, and
-   auto-creates namespace `bronze` + the three tables with explicit pyiceberg schemas
+   auto-creates namespace `bronze` + the four tables with explicit pyiceberg schemas
    (`AUTO_CREATE_TABLES=true`).
 
 ## Bronze schema contract (consumed by dbt — do not drift)
@@ -35,6 +35,7 @@ guarded by `tests/test_dbt_conformance.py`:
 | `bronze.booking_events` | `event_id` string, `event_type` string, `tenant_id` string, `booking_id` string, `status` string, `source` string, `price_cents` long, `currency` string, `starts_at` timestamp, `occurred_at` timestamp, `offering_id` string *(appended in SPEC-W3 §3 for revenue intelligence; existing tables get it via Iceberg schema evolution in `ensure_bronze`, old rows read NULL)* |
 | `bronze.payment_events` | `event_id` string, `event_type` string, `tenant_id` string, `booking_id` string, `amount_cents` long, `currency` string, `transfer_code` long, `ledger_ref` string, `occurred_at` timestamp |
 | `bronze.transcripts` | `conversation_id` string, `tenant_id` string, `role` string, `text` string, `ts` timestamp, `audio_url` string |
+| `bronze.usage_events` | `event_id` string, `tenant_id` string, `metric` string, `value` double, `occurred_at` timestamp, `meta` string *(Wave 5 #9; `value` is a double because call-minutes are fractional; `meta` is stringified JSON)* |
 
 Mapping rules (`analytics_pipeline/mapping.py`):
 
@@ -46,6 +47,10 @@ Mapping rules (`analytics_pipeline/mapping.py`):
 - **Payload keys** are read in camelCase *or* snake_case (`bookingId`/`booking_id`, …).
 - **Transcripts** also accept bare `ConversationTurn` messages (no envelope) for the raw
   Fluvio-fed path.
+- **Usage events** (Wave 5 #9) accept the bare metering payload
+  `{tenant_id, metric, value, ts, meta}` (CloudEvent envelopes tolerated);
+  `occurred_at ← ts` with the envelope `time` as fallback. This service only
+  *consumes* usage records — it never emits them itself.
 - **Timestamps** are naive UTC (Iceberg `timestamp` without timezone), consistent with the
   Spark jobs' `spark.sql.iceberg.handle-timestamp-without-timezone=true`. ISO-8601,
   epoch seconds and epoch millis inputs are accepted.
@@ -56,7 +61,8 @@ Mapping rules (`analytics_pipeline/mapping.py`):
 `silver/stg_booking_events` + `stg_transcripts` standardize casing/enums as **views**;
 gold tables aggregate them — `daily_bookings_per_tenant`, `revenue_daily` (uses
 `transfer_code` 101/102/103), `no_show_rate`, `agent_containment_rate` (a conversation is
-contained when it has zero `role = 'human_agent'` turns). The Spark silver jobs also read
+contained when it has zero `role = 'human_agent'` turns), and `usage_daily`
+(Wave 5 #9: `{tenant_id, date, metric, total_value}` from `bronze.usage_events`). The Spark silver jobs also read
 bronze directly to produce deduplicated `silver.*` Iceberg tables. Because dbt tests
 assert `accepted_values` on lowercased `event_type`/`source`/`role`, the sink preserves
 raw casing and lets dbt normalize.
@@ -68,6 +74,29 @@ raw casing and lets dbt normalize.
 | `GET /healthz` | 200 once Kafka consumer is running and Iceberg bootstrap done (503 while starting). Body: per-topic `lag` (highwater − position), buffered count, target table, `last_error`. |
 | `GET /metrics` | Prometheus text: `analytics_messages_consumed_total`, `analytics_rows_written_total`, `analytics_flushes_total{outcome}`, `analytics_flush_duration_seconds`, `analytics_buffer_messages`, `analytics_consumer_lag`, `analytics_consumer_running`. |
 | `GET /v1/recommendations?tenant=<uuid>` | SPEC-W3 §3 innovation 9: latest pricing recommendation per offering for the tenant, read via pyiceberg scan of `gold.reco_pricing` (written by `infra/lakehouse/spark/jobs/revenue_intelligence.py`; uses the same `ICEBERG_REST_URI`/S3 env as the sink). Returns `{"tenant", "recommendations": [...]}` with peak-hour stats, `suggested_peak_multiplier` and `suggested_deposit_pct`; **empty list when the table does not exist yet** (no Spark run), 502 on lakehouse errors. |
+| `GET /v1/metering?tenant=<uuid>&from=<date>&to=<date>` | Wave 5 #9: aggregated usage rows `{tenant_id, date, metric, total_value}` per tenant, read via pyiceberg scan of `bronze.usage_events` (same shape as the dbt `gold.usage_daily` mart, so results are consistent whether or not dbt has run). `from`/`to` are optional inclusive ISO dates; 400 on malformed/inverted ranges, 502 on lakehouse errors. **Empty list when no usage exists yet** — see *Usage metering (Wave 5 #9)* below. |
+
+## Usage metering (Wave 5 #9) — monetization hook
+
+This is the data side of the usage-metered API monetization track
+(STRATEGY.md §2 item 2): booking-service emits usage records
+`{tenant_id, metric, value, ts, meta}` on `opendesk.usage.events` (v1
+metric: `booking` — value 1 per booking lifecycle event), this service lands them in
+`bronze.usage_events`, dbt rolls them into `gold.usage_daily`, and
+`GET /v1/metering` serves per-tenant aggregates for billing/quota callers
+(e.g. $/1k calls with tiered rate limits — the APISIX plan-tier limits are
+already in place).
+
+**Honest v1 scope (sparse data is expected):**
+
+- **payments-service emits no usage records** — it is Rust and has no
+  toolchain in this wave; payment metrics stay deferred.
+- **voice-agent-runtime call-minutes are emitted by booking/conversation
+  side paths only where available**; the voice runtime's own emission is
+  tracked separately (another workstream).
+- Every consumer of this pipeline — the dbt mart, the metering endpoint —
+  therefore handles sparse/absent data gracefully: missing table, tenant
+  without rows, empty range → empty result, never an error.
 
 ## Environment variables
 
@@ -78,6 +107,7 @@ raw casing and lets dbt normalize.
 | `TOPIC_BOOKING_EVENTS` | `opendesk.booking.events` | Source topic → `bronze.booking_events`. |
 | `TOPIC_PAYMENT_EVENTS` | `opendesk.payments.events` | Source topic → `bronze.payment_events`. |
 | `TOPIC_TRANSCRIPTS` | `opendesk.conversation.transcripts` | Source topic → `bronze.transcripts`. |
+| `TOPIC_USAGE_EVENTS` | `opendesk.usage.events` | Source topic → `bronze.usage_events` (Wave 5 #9). |
 | `BATCH_SIZE` | `500` | Flush threshold per topic buffer. |
 | `FLUSH_INTERVAL` | `15` (seconds) | Max buffer age before flush. |
 | `ICEBERG_REST_URI` | `http://iceberg-rest:8181` | Iceberg REST catalog. |

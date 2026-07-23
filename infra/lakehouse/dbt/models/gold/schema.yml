@@ -84,3 +84,25 @@ models:
       - name: no_show_rate
       - name: suggested_peak_multiplier
       - name: suggested_deposit_pct
+
+  - name: usage_daily
+    description: >
+      Total usage per tenant per day per metric (Wave 5 #9) — the usage-metered
+      API monetization foundation (STRATEGY.md §2 item 2). Sparse by design:
+      v1 covers booking + call-minute metrics; rows exist only where usage
+      was recorded.
+    tests:
+      - unique:
+          column_name: "tenant_id || '|' || metric || '|' || cast(date as varchar)"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "total_value >= 0"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+      - name: metric
+        tests: [not_null]
+      - name: total_value
+        tests: [not_null]

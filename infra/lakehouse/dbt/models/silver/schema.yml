@@ -60,6 +60,25 @@ sources:
           - name: ledger_ref
           - name: occurred_at
             tests: [not_null]
+      - name: usage_events
+        description: >
+          One row per usage metering record (Wave 5 #9) emitted on
+          opendesk.usage.events as {tenant_id, metric, value, ts, meta}.
+          Sparse by design: v1 metrics are booking + call-minute counts.
+        columns:
+          - name: event_id
+          - name: tenant_id
+            tests: [not_null]
+          - name: metric
+            description: v1 emits 'booking' (1 per lifecycle event); call-minutes/ai_tokens/messages planned
+            tests: [not_null]
+          - name: value
+            description: Usage amount (double; call-minutes are fractional).
+            tests: [not_null]
+          - name: occurred_at
+            tests: [not_null]
+          - name: meta
+            description: Free-form JSON metadata (stringified).
 
 models:
   - name: stg_booking_events
