@@ -20,6 +20,8 @@ from .dapr_client import DaprClient
 from .db import Database
 from .indexer import TranscriptIndexer
 from .logging import get_logger, setup
+from .privacy import PrivacyEraseConsumer
+from .quality import CallQualityEnricher
 from .routes import router
 from .sinks import KafkaSink, TranscriptSink, build_sink
 
@@ -31,7 +33,9 @@ class State:
     dapr: DaprClient
     sink: TranscriptSink
     intel_sink: TranscriptSink
+    quality_sink: TranscriptSink
     indexer: TranscriptIndexer | None
+    quality_enricher: CallQualityEnricher | None
     privacy: PrivacyEraseConsumer | None
     log: object
 
@@ -79,19 +83,46 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                   error=str(exc))
         intel_sink = _NullSink()
 
+    # CallQualityEnriched (avg sentiment) → opendesk.conversation.quality
+    # (Wave 5 #2). Separate topic so enriched events never retrigger the
+    # SessionEnded consumers on opendesk.conversation.events.
+    quality_sink: TranscriptSink = KafkaSink(cfg.kafka_brokers, cfg.quality_topic)
+    try:
+        await quality_sink.start()
+    except Exception as exc:
+        log.error("quality sink start failed; CallQualityEnriched will not be published",
+                  error=str(exc))
+        quality_sink = _NullSink()
+
     indexer: TranscriptIndexer | None = None
     if cfg.indexer_enabled:
         indexer = TranscriptIndexer(cfg, db)
         indexer.start()
+
+    quality_enricher: CallQualityEnricher | None = None
+    if cfg.quality_enrich_enabled:
+        quality_enricher = CallQualityEnricher(cfg, db, quality_sink)
+        quality_enricher.start()
+
+    privacy: PrivacyEraseConsumer | None = None
+    if cfg.privacy_enabled:
+        try:
+            await db.ensure_contact_column()
+        except Exception as exc:
+            log.error("contact column bootstrap failed; privacy erase will fail",
+                      error=str(exc))
+        privacy = PrivacyEraseConsumer(cfg, db)
+        privacy.start()
 
     app.state.cfg = cfg
     app.state.db = db
     app.state.dapr = dapr
     app.state.sink = sink
     app.state.intel_sink = intel_sink
+    app.state.quality_sink = quality_sink
     app.state.log = log
     log.info("conversation-service started", port=cfg.port, sink=cfg.transcript_sink,
-             intel_llm=cfg.intel_llm)
+             intel_llm=cfg.intel_llm, quality_enrich=cfg.quality_enrich_enabled)
 
     try:
         yield
@@ -99,6 +130,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log.info("conversation-service shutting down")
         if indexer is not None:
             await indexer.stop()
+        if quality_enricher is not None:
+            with contextlib.suppress(Exception):
+                await quality_enricher.stop()
         if privacy is not None:
             with contextlib.suppress(Exception):
                 await privacy.stop()
@@ -106,6 +140,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await sink.close()
         with contextlib.suppress(Exception):
             await intel_sink.close()
+        with contextlib.suppress(Exception):
+            await quality_sink.close()
         with contextlib.suppress(Exception):
             await dapr.close()
         with contextlib.suppress(Exception):

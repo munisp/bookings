@@ -42,6 +42,14 @@ class Config:
     intel_llm_timeout_s: float = 3.0
     enriched_topic: str = "opendesk.conversation.enriched"
 
+    # Call-quality sentiment enrichment (STRATEGY §3, Wave 5 innovation 2):
+    # consume SessionEnded from the conversation events topic in a dedicated
+    # group, publish CallQualityEnriched to the quality topic.
+    quality_enrich_enabled: bool = True
+    conversation_events_topic: str = "opendesk.conversation.events"
+    quality_topic: str = "opendesk.conversation.quality"
+    sentiment_group: str = "conversation-sentiment"
+
     # GDPR privacy events consumer (SPEC-W3 §2, innovation 13).
     privacy_enabled: bool = True
     privacy_topic: str = "opendesk.privacy.events"
@@ -90,6 +98,12 @@ def load() -> Config:
         indexer_group=_env("INDEXER_GROUP", "conversation-service-indexer"),
         indexer_bulk_size=int(_env("INDEXER_BULK_SIZE", "100")),
         indexer_bulk_flush_seconds=float(_env("INDEXER_BULK_FLUSH_SECONDS", "2")),
+        quality_enrich_enabled=_env("QUALITY_ENRICH_ENABLED", "true").lower() == "true",
+        conversation_events_topic=_env(
+            "CONVERSATION_EVENTS_TOPIC", "opendesk.conversation.events"
+        ),
+        quality_topic=_env("QUALITY_EVENTS_TOPIC", "opendesk.conversation.quality"),
+        sentiment_group=_env("QUALITY_ENRICH_GROUP", "conversation-sentiment"),
         privacy_enabled=_env("PRIVACY_ENABLED", "true").lower() == "true",
         privacy_topic=_env("PRIVACY_EVENTS_TOPIC", "opendesk.privacy.events"),
         privacy_group=_env("PRIVACY_EVENTS_GROUP", "conversation-service-privacy"),

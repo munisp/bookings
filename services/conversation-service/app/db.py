@@ -302,6 +302,28 @@ class Database:
                 conversation_id,
             )
 
+    async def sentiment_summary(
+        self, conversation_id: uuid.UUID, tenant_id: uuid.UUID
+    ) -> tuple[float | None, int]:
+        """(avg sentiment, scored-turn count) for one conversation.
+
+        Only turns with a non-NULL sentiment (written by app/intel.py) count;
+        (None, 0) means "nothing to enrich" (STRATEGY §3, Wave 5 innovation 2).
+        """
+        async with self._tenant_tx(tenant_id) as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT AVG(sentiment) AS avg_sentiment,
+                       COUNT(sentiment) AS scored_turns
+                FROM turns
+                WHERE conversation_id = $1 AND sentiment IS NOT NULL
+                """,
+                conversation_id,
+            )
+        avg = row["avg_sentiment"] if row else None
+        count = int(row["scored_turns"]) if row else 0
+        return (float(avg) if avg is not None else None), count
+
     async def conversation_exists(
         self, conversation_id: uuid.UUID, tenant_id: uuid.UUID
     ) -> bool:
