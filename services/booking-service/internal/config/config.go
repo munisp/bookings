@@ -44,6 +44,10 @@ type Config struct {
 	// Customer portal (Wave 5 #7)
 	PortalSecret       string // HMAC secret signing 15-min portal JWTs (PORTAL_SECRET)
 	NotificationsTopic string // opendesk.notifications.outbox (SendPortalCode delivery)
+	// Geospatial (SPEC-W8 Part A)
+	GeocodeEnabled   bool   // GEOCODE_ENABLED: Nominatim address geocoding hook (default false)
+	GeocodeBaseURL   string // GEOCODE_BASE_URL (default https://nominatim.openstreetmap.org)
+	GeoCampaignBatch int    // GEO_CAMPAIGN_BATCH: recipients per campaign batch (default 50)
 }
 
 // Load reads configuration from the environment.
@@ -82,6 +86,9 @@ func Load() (Config, error) {
 		// Dev fallback keeps the portal bootable locally; prod MUST override.
 		PortalSecret:       envStr("PORTAL_SECRET", "opendesk-dev-portal-secret-change-in-prod"),
 		NotificationsTopic: envStr("NOTIFICATIONS_TOPIC", "opendesk.notifications.outbox"),
+		GeocodeEnabled:     envStr("GEOCODE_ENABLED", "false") == "true",
+		GeocodeBaseURL:     envStr("GEOCODE_BASE_URL", "https://nominatim.openstreetmap.org"),
+		GeoCampaignBatch:   envInt("GEO_CAMPAIGN_BATCH", 50),
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, fmt.Errorf("DATABASE_URL is required")

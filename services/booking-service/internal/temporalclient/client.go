@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/opendesk/booking-service/internal/bookingops"
+	"github.com/opendesk/booking-service/internal/geo"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
@@ -54,6 +55,32 @@ func Dial(hostPort, namespace, taskQueue string) (*Client, error) {
 
 // Close releases the underlying connection.
 func (c *Client) Close() { c.tc.Close() }
+
+// Underlying exposes the raw SDK client so main can run a worker on the
+// same connection (GeoCampaignWorkflow host, SPEC-W8 A2).
+func (c *Client) Underlying() client.Client { return c.tc }
+
+// StartGeoCampaign starts GeoCampaignWorkflow (hosted by booking-service's
+// own worker on the same task queue) with workflow ID
+// "geo-campaign-{campaignID}" so duplicate launches are idempotent.
+// Implements geo.CampaignStarter.
+func (c *Client) StartGeoCampaign(ctx context.Context, in geo.GeoCampaignInput) (string, error) {
+	id := "geo-campaign-" + in.CampaignID
+	opts := client.StartWorkflowOptions{
+		ID:                    id,
+		TaskQueue:             c.taskQueue,
+		WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
+	}
+	_, err := c.tc.ExecuteWorkflow(ctx, opts, geo.WorkflowType, in)
+	if err != nil {
+		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
+		if errors.As(err, &alreadyStarted) {
+			return id, nil
+		}
+		return "", fmt.Errorf("execute %s: %w", geo.WorkflowType, err)
+	}
+	return id, nil
+}
 
 // StartBookingSaga starts BookingSagaWorkflow with workflow ID
 // "booking-saga-{bookingID}" so duplicate starts are idempotent.

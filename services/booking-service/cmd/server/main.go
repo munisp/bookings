@@ -17,11 +17,15 @@ import (
 	"github.com/opendesk/booking-service/internal/config"
 	"github.com/opendesk/booking-service/internal/consumer"
 	"github.com/opendesk/booking-service/internal/daprc"
+	"github.com/opendesk/booking-service/internal/geo"
 	"github.com/opendesk/booking-service/internal/httpapi"
 	"github.com/opendesk/booking-service/internal/outbox"
 	"github.com/opendesk/booking-service/internal/permify"
 	"github.com/opendesk/booking-service/internal/store"
 	"github.com/opendesk/booking-service/internal/temporalclient"
+	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 	"go.uber.org/zap"
 )
 
@@ -61,6 +65,7 @@ func run() error {
 	// start is logged for reconciliation).
 	var saga bookingops.SagaStarter
 	var gdpr httpapi.GdprStarter
+	var geoStarter geo.CampaignStarter
 	tc, err := temporalclient.Dial(cfg.TemporalHostPort, cfg.TemporalNamespace, cfg.TemporalTaskQueue)
 	if err != nil {
 		logger.Warn("temporal unavailable at boot; saga starts will fail until redeploy",
@@ -69,6 +74,37 @@ func run() error {
 		defer tc.Close()
 		saga = tc
 		gdpr = tc
+		geoStarter = tc
+
+		// SPEC-W8 A2: booking-service hosts the GeoCampaignWorkflow and its
+		// DB activities on the shared opendesk-main task queue. Recipient
+		// sends are scheduled as "NotifyPaced" activity tasks, which the
+		// notification-worker picks up from the same queue (it owns the CPS
+		// pacer + sender rotation).
+		geoActs := &geo.CampaignActivities{Store: st, UsageTopic: cfg.UsageEventsTopic, Logger: logger}
+		w := worker.New(tc.Underlying(), cfg.TemporalTaskQueue, worker.Options{})
+		w.RegisterWorkflowWithOptions(geo.GeoCampaignWorkflow, workflow.RegisterOptions{Name: geo.WorkflowType})
+		w.RegisterActivityWithOptions(geoActs.AudienceBatch, activity.RegisterOptions{Name: geo.ActivityGeoAudienceBatch})
+		w.RegisterActivityWithOptions(geoActs.FilterUnsent, activity.RegisterOptions{Name: geo.ActivityGeoFilterUnsent})
+		w.RegisterActivityWithOptions(geoActs.RecordSends, activity.RegisterOptions{Name: geo.ActivityGeoRecordSends})
+		w.RegisterActivityWithOptions(geoActs.CompleteCampaign, activity.RegisterOptions{Name: geo.ActivityGeoCompleteCampaign})
+		w.RegisterActivityWithOptions(geoActs.FailCampaign, activity.RegisterOptions{Name: geo.ActivityGeoFailCampaign})
+		if err := w.Start(); err != nil {
+			logger.Error("geo campaign worker failed to start", zap.Error(err))
+		} else {
+			defer w.Stop()
+			logger.Info("geo campaign worker started", zap.String("task_queue", cfg.TemporalTaskQueue))
+		}
+	}
+
+	// SPEC-W8 A2 geospatial endpoints + optional Nominatim geocoding hook
+	// (GEOCODE_ENABLED, off by default).
+	geoHandlers := &geo.Handlers{
+		Store:     st,
+		Starter:   geoStarter,
+		Geocoder:  geo.NewGeocoder(cfg.GeocodeEnabled, cfg.GeocodeBaseURL),
+		BatchSize: cfg.GeoCampaignBatch,
+		Log:       logger,
 	}
 
 	// Availability cache (SPEC-W3 §3) — nil when REDIS_ADDR is unset.
@@ -130,6 +166,7 @@ func run() error {
 		PortalSecret:       cfg.PortalSecret,
 		PubSubName:         cfg.PubSubName,
 		NotificationsTopic: cfg.NotificationsTopic,
+		Geo:                geoHandlers,
 	}
 
 	srv := &http.Server{
