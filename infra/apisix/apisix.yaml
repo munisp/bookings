@@ -164,6 +164,24 @@ upstreams:
         healthy: {http_statuses: [200, 101, 204, 400, 401, 403, 404]}
         unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
 
+  - id: messaging-gateway
+    type: roundrobin
+    nodes:
+      "messaging-gateway:7011": 1
+    retries: 0            # webhooks must answer 200 fast; never amplify retries
+    timeout: {connect: 5, send: 30, read: 30}
+    checks:
+      active:
+        type: http
+        http_path: /healthz
+        healthy: {interval: 10, successes: 1, http_statuses: [200]}
+        unhealthy: {interval: 10, http_failures: 2, http_statuses: [500, 502, 503, 504]}
+        timeout: 2
+      passive:
+        type: http
+        healthy: {http_statuses: [200, 201, 204, 400, 401, 403, 404]}
+        unhealthy: {http_statuses: [500, 502, 503, 504], http_failures: 3, tcp_failures: 2}
+
   - id: twenty-api
     type: roundrobin
     nodes:
@@ -491,6 +509,40 @@ routes:
         max_age: 3600
         allow_credential: false
 
+  # ---- Omnichannel inbound webhooks (SPEC-W6 Part A): /webhooks/* -> messaging-gateway ----
+  # PUBLIC by design: Meta/Telegram cannot present Keycloak tokens. Auth is
+  # provider-native instead — the Meta verify-token handshake (GET) and the
+  # Telegram X-Telegram-Bot-Api-Secret-Token shared secret, both enforced by
+  # the gateway itself (403 on mismatch). WAF: covered by the open-appsec
+  # nano-agent attachment (compose profile `appsec`) like every other route —
+  # see the WAF note at the top of this file. No proxy-rewrite: the gateway
+  # serves /webhooks/* natively. Handlers always answer 200 fast (providers
+  # retry-storm on non-200), so limit-count stays generous.
+  - id: webhooks-messaging
+    uris:
+      - /webhooks/*
+      - /webhooks
+    methods: [GET, POST, OPTIONS]
+    upstream_id: messaging-gateway
+    plugins:
+      limit-count:
+        count: 600
+        time_window: 60
+        rejected_code: 429
+        key: remote_addr
+        policy: redis
+        redis_host: redis
+        redis_port: 6379
+        redis_database: 0
+        redis_timeout: 1000
+      cors:
+        allow_origins: "*"
+        allow_methods: "*"
+        allow_headers: "*"
+        expose_headers: "*"
+        max_age: 3600
+        allow_credential: false
+
   # ---- Twenty CRM (SPEC-CRM §A): /crm/* -> twenty-api, bearer_only OIDC ----
   - id: crm-twenty
     uris:
@@ -601,8 +653,7 @@ routes:
   # value, so each plan gets its own bucket. Plan map (per-tenant, per-min):
   #   free = 60   |   pro = 600   |   (absent header = "anonymous" bucket: 60)
   # Deploy by cloning this block per plan with a `vars` match, e.g.:
-  #   free: vars: [["http_x_tenant_plan","==","free"]] 
-  #     + count: 60
+  #   free: vars: [["http_x_tenant_plan","==","free"]]  + count: 60
   #   pro:  vars: [["http_x_tenant_plan","==","pro"]]   + count: 600
   # This route is DISABLED (status: 0) — it documents the pattern; enable it
   # on the plan-gated surface (e.g. /api/knowledge/*) when billing launches.
