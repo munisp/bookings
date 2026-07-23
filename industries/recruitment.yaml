@@ -1,0 +1,142 @@
+# Recruitment industry pack (SPEC-W6 Part B) — recruitment and domestic
+# staffing agencies. Candidate intake + vetting, employer consultations,
+# interview scheduling, document verification. NGN/kobo, NDPA consent.
+id: recruitment
+displayName: Recruitment & Domestic Staffing
+terminology:
+  offering: service
+  team_member: recruiter
+  booking: appointment
+  contact: candidate
+agentPersona: |
+  You are the front-desk coordinator of a Nigerian recruitment and domestic
+  staffing agency (household staff, drivers, nannies, office staff). You
+  are professional, warm and discreet — you handle people's livelihoods and
+  employers' trust. Mirror the caller's register: Nigerian Pidgin if they
+  speak Pidgin, polite standard English if they are formal.
+
+  Hard rules (never break these):
+  - NEVER promise a candidate a job or an employer a hire — placements are
+    decided after vetting and interviews, never on a call.
+  - NEVER discuss one candidate's details with another caller, and never
+    share an employer's home address until a placement is confirmed.
+  - NEVER collect "processing" or "registration" fees by transfer on a
+    call; candidate registration is free, and all fees are published and
+    paid at the office with a receipt.
+  - NEVER guarantee the outcome of background checks or references —
+    report only what is verified.
+
+  What you do: candidate intake and vetting slot booking, employer
+  consultation booking, interview scheduling between vetted candidates and
+  employers, and document verification appointments. Always confirm the
+  caller's phone number and whether they are a candidate or an employer
+  before booking. Quote fees in naira format like ₦25,000.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: true
+  cancellationWindowHours: 24
+temporalWorkflow: ClinicIntakeWorkflow
+languages: [en, pcm]
+consentText: |
+  We dey record this call and we go keep your name, phone number,
+  qualifications and vetting details so we fit match candidates with
+  employers and verify documents. We no dey share your data with anybody
+  outside a placement you are part of, and we delete call records after
+  180 days under the Nigeria Data Protection Act 2023. You fit ask us to
+  see, correct or delete your data at any time. If you no want make we
+  record, tell us now.
+offerings:
+- name: Candidate Intake & Vetting Slot
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 0
+  capacity: 2
+- name: Employer Consultation
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 2500000 # ₦25,000
+  capacity: 1
+- name: Interview Scheduling (Candidate x Employer)
+  duration_min: 60
+  buffer_min: 15
+  price_cents: 0
+  capacity: 1
+- name: Document Verification Appointment
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 1000000 # ₦10,000
+  capacity: 2
+- name: Background & Reference Check Intake
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 1500000 # ₦15,000
+  capacity: 2
+reminders:
+  offsets: ["72h", "24h"]
+  channels: ["sms", "email"]
+knowledgeSeed:
+- title: Candidate intake & vetting process
+  body: |
+    Candidate registration is free. Intake captures: full name, phone,
+    role sought (nanny, housekeeper, driver, cook, office assistant and
+    similar), experience, salary expectation, and two referees (names and
+    phones). At the vetting slot the candidate brings one valid ID
+    (national ID, voter's card or driver's license), guarantor details and
+    any certificates. Vetting includes ID verification, reference calls
+    and, for drivers, license and driving-record checks. No candidate is
+    presented to an employer before vetting completes.
+- title: Fees & payment policy
+  body: |
+    Candidate registration and interviews are free. Employer consultation
+    is ₦25,000 (credited against the placement fee). Document verification
+    is ₦10,000 per candidate; background and reference checks are ₦15,000.
+    Placement fees are a published percentage of the first month's salary
+    and are agreed in writing at the consultation. ALL fees are paid at
+    the office with a receipt or to the company's official account — staff
+    never collect fees by personal transfer, and the agency never charges
+    candidates a "job guarantee" fee.
+- title: Interview scheduling rules
+  body: |
+    Interviews are scheduled only between vetted candidates and consulted
+    employers. The coordinator confirms both parties' phone numbers,
+    agrees a 60-minute slot (in-office or video), and sends SMS reminders
+    72 and 24 hours before. The employer's home address is never shared
+    before a confirmed placement. Cancellations inside 24 hours are
+    rescheduled once for free; repeated no-shows pause the candidate's or
+    employer's file.
+- title: Domestic staffing safeguards
+  body: |
+    For domestic roles (nannies, housekeepers, drivers placed in homes),
+    every placement requires: verified ID, guarantor form signed in the
+    office, two completed reference checks, and a written placement
+    agreement covering duties, hours, salary and rest days. The agency
+    mediates disputes in the first 3 months and replaces a placement once
+    free of charge within the first month if it breaks down. Any report of
+    mistreatment — of a candidate or by a candidate — is escalated to the
+    agency director the same day.
+dashboardLabels:
+  bookingSingular: Appointment
+  bookingPlural: Appointments
+  customerTerm: Candidate
+agents:
+- id: vetting-coordinator
+  name: Vetting Coordinator
+  persona: |
+    You are the agency's vetting coordinator. You take candidate intake
+    (role, experience, referees, salary expectation), book vetting and
+    document-verification slots, and explain exactly which documents to
+    bring. You never promise jobs, never share one person's details with
+    another caller, and never collect fees by transfer.
+  intents: [job, candidate, apply, cv, vetting, verification, documents, guarantor, reference, nanny, driver, housekeeper, cook, interview]
+- id: employer-desk
+  name: Employer Desk
+  persona: |
+    You are the employer desk coordinator. You book employer consultations
+    (₦25,000, credited against the placement fee), explain the published
+    fee structure and the vetting safeguards, and schedule interviews
+    between vetted candidates and employers — confirming both parties'
+    phone numbers and never sharing a home address before a confirmed
+    placement.
+  intents: [employer, hire, hiring, staff, staffing, placement, "looking for staff", consultation, fee, fees, interview]

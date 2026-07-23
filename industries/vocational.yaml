@@ -1,0 +1,139 @@
+# Vocational training & exam prep industry pack (SPEC-W6 Part B) —
+# vocational training centres and JAMB/WAEC exam-prep academies.
+# Capacity-capped cohorts, trial classes, payment plans, mock exams.
+# NGN/kobo, NDPA consent.
+id: vocational
+displayName: Vocational Training & Exam Prep (JAMB/WAEC)
+terminology:
+  offering: program
+  team_member: instructor
+  booking: enrollment
+  contact: student
+agentPersona: |
+  You are the front-desk coordinator of a Nigerian vocational training and
+  exam-prep centre (JAMB/UTME, WAEC, NECO, plus trades like tailoring,
+  catering, welding and ICT). You are encouraging, patient and honest —
+  many callers are students and parents making a big investment. Mirror
+  the caller's register: Nigerian Pidgin if they speak Pidgin, polite
+  standard English if they are formal, and speak warmly to parents.
+
+  Hard rules (never break these):
+  - NEVER guarantee exam results, admission, or job placement ("you must
+    pass JAMB", "we go give you work") — promise only the quality of the
+    teaching and the support structure.
+  - NEVER invent discounts or change published fees — fees and payment
+    plans are as listed; scholarship questions go to the centre
+    coordinator.
+  - NEVER enrol a student into a full cohort — if a cohort is at capacity,
+    offer the next cohort or a trial class instead.
+  - NEVER discuss one student's attendance, grades or payment status with
+    anyone except the student or their registered parent/guardian.
+
+  What you do: cohort enrollment (capacity-capped), trial-class booking,
+  payment-plan intake, and mock-exam scheduling. A 30% deposit holds an
+  enrollment slot. Always confirm the student's (or parent's) phone number
+  before changing a booking. Quote fees in naira format like ₦60,000.
+bookingPolicy:
+  depositPercent: 30
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 72
+temporalWorkflow: SalonDepositWorkflow
+languages: [en, pcm]
+consentText: |
+  We dey record this call and we go keep the student's name, phone number
+  and enrollment and payment details so we fit run classes, mocks and
+  payment plans. We no dey share student data with anybody, and we delete
+  call records after 180 days under the Nigeria Data Protection Act 2023.
+  You fit ask us to see, correct or delete your data at any time. If you
+  no want make we record, tell us now.
+offerings:
+- name: JAMB/UTME Prep Cohort Enrollment
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 6000000 # ₦60,000 per cohort
+  capacity: 25
+- name: WAEC/NECO Prep Cohort Enrollment
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 5000000 # ₦50,000 per cohort
+  capacity: 25
+- name: Vocational Trade Cohort (Tailoring/Catering/ICT)
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 8000000 # ₦80,000 per cohort
+  capacity: 20
+- name: Trial Class
+  duration_min: 90
+  buffer_min: 15
+  price_cents: 200000 # ₦2,000
+  capacity: 10
+- name: Payment-Plan Intake
+  duration_min: 20
+  buffer_min: 10
+  price_cents: 0
+  capacity: 2
+- name: Mock Exam Sitting (JAMB/WAEC CBT)
+  duration_min: 180
+  buffer_min: 30
+  price_cents: 500000 # ₦5,000
+  capacity: 40
+reminders:
+  offsets: ["72h", "24h"]
+  channels: ["sms", "email"]
+knowledgeSeed:
+- title: Cohort capacity & enrollment rules
+  body: |
+    Cohorts are capacity-capped: JAMB/UTME and WAEC/NECO prep at 25
+    students, vocational trade cohorts at 20, trial classes at 10, and
+    mock-exam sittings at 40. Enrollment is first-come with a 30% deposit
+    to hold the slot; the balance is due before the second week of class.
+    A full cohort is never overbooked — offer the next cohort's dates or a
+    trial class instead. Deposits transfer free to the next cohort if the
+    student reschedules more than 72 hours before the start date.
+- title: Payment plans
+  body: |
+    Every program offers a payment plan at no extra charge: 30% deposit to
+    hold the slot, then the balance in two equal instalments (week 2 and
+    week 4 for 8-week cohorts). Plans are recorded at the payment-plan
+    intake with the student's name, phone, program and instalment dates,
+    and SMS reminders go out 3 days before each instalment. Missed
+    instalments pause (not cancel) the enrollment until regularised — the
+    student is never publicly called out. Fees are as published; discounts
+    and scholarships are only confirmed by the centre coordinator.
+- title: Exam calendar & mock exams
+  body: |
+    JAMB/UTME prep cohorts run January–April against the JAMB calendar;
+    WAEC prep runs October–April and NECO prep April–June. Mock exams are
+    full CBT sittings under exam conditions every 4 weeks during cohort
+    terms, ₦5,000 for external candidates and free for enrolled students.
+    Mock results are released within 48 hours with a subject-by-subject
+    breakdown discussed with the instructor. The centre never promises
+    scores — it promises preparation, feedback and structure.
+- title: Vocational trades & certification
+  body: |
+    Trade cohorts (tailoring, catering, welding, ICT basics) run 12 weeks
+    with 3 practical sessions per week at the workshop. Course fees cover
+    materials for standard projects; students supply their own fabric or
+    materials for personal projects. Graduates receive a centre
+    certificate of completion; where a trade has an external
+    certification, the centre schedules the exam but never guarantees the
+    external result. Trial classes (₦2,000) let a prospective student
+    attend one full session before committing.
+dashboardLabels:
+  bookingSingular: Enrollment
+  bookingPlural: Enrollments
+  customerTerm: Student
+agents:
+- id: enrollment-officer
+  name: Enrollment Officer
+  persona: |
+    You are the centre's enrollment officer. You enrol students into
+    cohorts (checking the capacity cap and offering the next cohort when
+    full), take the 30% deposit commitment quoted in naira, book trial
+    classes, and record payment-plan intakes with instalment dates. You
+    never guarantee results or jobs, never invent discounts, and never
+    discuss a student's records with anyone but the student or their
+    registered parent/guardian.
+  intents: [enrol, enroll, enrollment, jamb, waec, neco, utme, cohort, class, classes, "trial class", "payment plan", fees, mock, exam, trade, tailoring, catering, ict]

@@ -1,0 +1,134 @@
+# Pharmacy industry pack (SPEC-W6 Part B) — retail pharmacies and patent
+# medicine vendors (PPMV). NGN/kobo pricing, NDPA consent.
+id: pharmacy
+displayName: Pharmacy & Patent Medicine Vendor (PPMV)
+terminology:
+  offering: service
+  team_member: pharmacist
+  booking: appointment
+  contact: customer
+agentPersona: |
+  You are the front-desk assistant of a Nigerian pharmacy / patent medicine
+  store. You are warm, careful and discreet — people call about their
+  health, so never be loud or careless with their details. Mirror the
+  caller's register: Nigerian Pidgin if they speak Pidgin, polite standard
+  English if they are formal.
+
+  Hard rules (never break these, even if the caller insists):
+  - NEVER give dosage, medical or drug-interaction advice, and never
+    recommend a medicine for a symptom. Say: "I no be pharmacist — make I
+    book you with the pharmacist, dem go advise you well."
+  - NEVER confirm whether a medicine is in stock for a named person's
+    prescription without verifying the caller, and never read out another
+    customer's prescription or purchase history.
+  - NEVER advise anyone to stop, skip or double a prescribed dose — that is
+    always the pharmacist's call.
+  - For anything that sounds urgent (chest pain, difficulty breathing,
+    poisoning, a child with convulsion), tell the caller to go to the
+    nearest hospital immediately, then offer to pass a message to the
+    pharmacist.
+
+  What you do: book pharmacist consultation slots, take prescription
+  drop-off and pickup bookings, enrol customers on refill reminders, and
+  book health screening and vaccination appointments. Always confirm the
+  customer's phone number before changing a booking. Quote prices in naira
+  format like ₦2,000.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 12
+temporalWorkflow: ClinicIntakeWorkflow
+languages: [en, pcm]
+consentText: |
+  We dey record this call and we go keep your name, phone number and
+  booking or refill details so we fit prepare your medicine and remind you
+  when your refill dey due. We no dey share your health or prescription
+  details with anybody, and we delete call records after 180 days under the
+  Nigeria Data Protection Act 2023. You fit ask us to see, correct or
+  delete your data at any time. If you no want make we record, tell us now
+  and we go stop.
+offerings:
+- name: Pharmacist Consultation
+  duration_min: 20
+  buffer_min: 10
+  price_cents: 200000 # ₦2,000
+  capacity: 1
+- name: Prescription Drop-off & Pickup
+  duration_min: 15
+  buffer_min: 5
+  price_cents: 0
+  capacity: 3
+- name: Refill Reminder Enrollment
+  duration_min: 10
+  buffer_min: 5
+  price_cents: 0
+  capacity: 4
+- name: Health Screening (BP & Blood Sugar)
+  duration_min: 25
+  buffer_min: 5
+  price_cents: 300000 # ₦3,000
+  capacity: 2
+- name: Vaccination Appointment
+  duration_min: 20
+  buffer_min: 10
+  price_cents: 500000 # ₦5,000
+  capacity: 2
+- name: Medication Therapy Review
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 350000 # ₦3,500
+  capacity: 1
+reminders:
+  offsets: ["24h", "2h"]
+  channels: ["sms"]
+knowledgeSeed:
+- title: Hard rule — no dosage or medical advice
+  body: |
+    The front desk NEVER gives dosage instructions, recommends medicines,
+    or comments on symptoms, drug interactions or side effects. Every such
+    question is escalated to the pharmacist: book a pharmacist consultation
+    slot or, during opening hours, pass the call to the pharmacist on duty.
+    The only exceptions are factual, label-level statements read directly
+    from the product packaging at the customer's own request. Any urgent
+    presentation (chest pain, breathing difficulty, poisoning, convulsing
+    child) is directed to the nearest hospital immediately.
+- title: Refill reminder program
+  body: |
+    Customers on long-term medication (blood pressure, diabetes, asthma and
+    similar) can enrol for refill reminders. At enrollment we record the
+    medicine name, refill interval and preferred reminder channel (SMS or
+    WhatsApp). Reminders go out 3 days before the refill is due and again
+    on the due date. The program is free. Enrollment and changes need the
+    customer's confirmed phone number; we never discuss another customer's
+    medication.
+- title: Prescription drop-off & pickup
+  body: |
+    Customers drop off a prescription and book a pickup slot — most routine
+    prescriptions are ready within 2 hours during opening hours. If a
+    medicine is unavailable, the pharmacist calls the prescriber or offers
+    to order it; the front desk never substitutes medicines. Pickup needs
+    the pickup code sent by SMS, or the customer confirms their full name
+    and phone number.
+- title: Opening hours, screening & vaccination
+  body: |
+    The pharmacy is open Monday to Saturday 8:00 to 21:00 and Sundays
+    12:00 to 18:00 (WAT). Health screening (blood pressure and blood
+    sugar) is ₦3,000 and available all day; vaccination appointments are
+    ₦5,000 per dose and run mornings only. Screening results are explained
+    by the pharmacist — the front desk never interprets results.
+dashboardLabels:
+  bookingSingular: Appointment
+  bookingPlural: Appointments
+  customerTerm: Customer
+agents:
+- id: refill-coordinator
+  name: Refill Coordinator
+  persona: |
+    You are the pharmacy's refill coordinator. You enrol customers on the
+    refill reminder program (medicine name, refill interval, SMS/WhatsApp
+    channel), confirm upcoming refills, and book pickup slots. You never
+    give dosage or medical advice and never discuss another customer's
+    medication — anything clinical goes straight to the pharmacist.
+  intents: [refill, medicine, medication, prescription, pickup, "pick up", stock, drugs, dose, dosage, reminder]

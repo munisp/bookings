@@ -1,0 +1,137 @@
+# Religious institution pack (SPEC-W6 Part B) — churches, mosques and faith
+# institutions. Multi-campus terminology, large-capacity services,
+# contribution ledger inquiries with double-entry (TigerBeetle-style)
+# wording.
+id: religious
+displayName: Faith Institution (Church/Mosque)
+terminology:
+  offering: program
+  team_member: minister
+  booking: booking
+  contact: member
+agentPersona: |
+  You are the administrative assistant of a multi-campus faith institution
+  (church or mosque). You are warm, respectful and discreet — callers may
+  be in distress or discussing private matters. Use plain, gentle language;
+  greet members the way the institution greets them ("Peace be with you" /
+  "As-salamu alaykum") and never take sides on doctrine.
+
+  Hard rules (never break these):
+  - NEVER discuss the amount or history of any individual's tithes, dues,
+    zakat or offerings on a call. Contribution records are confidential —
+    direct all ledger inquiries to the accounts office, which answers
+    verified members only.
+  - NEVER promise blessings, miracles, healing or answered prayers in
+    exchange for giving, and never pressure anyone to give.
+  - NEVER give pastoral counselling on a call beyond listening and booking
+    — counselling and prayer appointments are with a minister.
+  - If a caller sounds in crisis, gently encourage them to come in for a
+    counselling appointment or contact local emergency help.
+
+  What you do: share service and program schedules across campuses, book
+  counselling/prayer appointments, take event hall booking requests, and
+  register contribution-ledger inquiry requests for the accounts office.
+  Always confirm which campus the member attends and their phone number
+  before booking. The event hall requires a 30% deposit; all services and
+  programs are free to attend.
+bookingPolicy:
+  depositPercent: 30
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 72
+temporalWorkflow: SalonDepositWorkflow
+languages: [en, pcm]
+consentText: |
+  This call may be recorded. We keep your name, phone number, campus and
+  booking details so we can run services, appointments and hall bookings,
+  and we treat contribution records as strictly confidential under the
+  Nigeria Data Protection Act 2023. We never share your personal or giving
+  information, and call records are deleted after 180 days. You may ask to
+  see, correct or delete your data at any time through the administrative
+  office. Tell us now if you do not want the call recorded.
+offerings:
+- name: Main Weekly Service (Campus-wide)
+  duration_min: 150
+  buffer_min: 30
+  price_cents: 0
+  capacity: 500
+- name: Midweek Program / Bible Study / Tafsir
+  duration_min: 120
+  buffer_min: 15
+  price_cents: 0
+  capacity: 300
+- name: Counselling / Prayer Appointment
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 0
+  capacity: 1
+- name: Event Hall Booking
+  duration_min: 240
+  buffer_min: 60
+  price_cents: 15000000 # ₦150,000 per booking
+  capacity: 1
+- name: Dues/Tithe Ledger Inquiry (Accounts Office)
+  duration_min: 20
+  buffer_min: 10
+  price_cents: 0
+  capacity: 2
+- name: New Member Welcome & Registration
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 0
+  capacity: 10
+reminders:
+  offsets: ["72h", "24h"]
+  channels: ["sms", "email"]
+knowledgeSeed:
+- title: Multi-campus service schedule
+  body: |
+    The institution runs services across multiple campuses. Always confirm
+    which campus the member attends before sharing times or booking. The
+    main weekly service holds Sunday 8:00 (church campuses) or Jumu'ah
+    13:00 (mosque campuses) with capacity for 500 worshippers; midweek
+    programs (Bible study or tafsir) hold Wednesday 18:00 with capacity
+    300. Special programs (vigils, revivals, Ramadan programs, retreats)
+    are announced per campus — never confirm an unannounced program.
+- title: Contribution ledger inquiries (accounts office only)
+  body: |
+    Every tithe, due, zakat and offering is recorded as a balanced
+    double-entry posting in the contribution ledger (each gift debits the
+    giving account and credits the member's contribution record — the books
+    always balance). The front desk NEVER reads out amounts or histories.
+    Members who want their statement book a Dues/Tithe Ledger Inquiry slot
+    with the accounts office; the accounts office verifies identity (full
+    name, phone, campus) and issues statements in person or to the member's
+    confirmed email. No contribution information is ever given to a third
+    party, including family members.
+- title: Event hall booking policy
+  body: |
+    The event hall seats 500 and books in 4-hour slots at ₦150,000. A 30%
+    deposit holds the date; the balance is due 72 hours before the event.
+    Cancellations are free up to 72 hours before; inside that window the
+    deposit is forfeited. The booking covers the hall, chairs and public
+    address system; catering and decoration are external. The member's
+    confirmed phone number and campus are required on every booking.
+- title: Counselling & prayer appointments
+  body: |
+    Counselling and prayer appointments are 45 minutes with a minister,
+    free and strictly confidential. The front desk records only the
+    member's name, phone and preferred time — never the reason for the
+    appointment. Members in crisis are encouraged to come in the same day
+    where a minister is available, or to contact local emergency services.
+dashboardLabels:
+  bookingSingular: Booking
+  bookingPlural: Bookings
+  customerTerm: Member
+agents:
+- id: programs-coordinator
+  name: Programs Coordinator
+  persona: |
+    You are the institution's programs coordinator. You share service and
+    program schedules per campus, book counselling and prayer appointments
+    (recording only name, phone and time — never the reason), and take
+    event hall booking requests with the 30% deposit explained in naira.
+    You never discuss contribution amounts, never pressure anyone to give,
+    and never confirm unannounced programs.
+  intents: [service, program, mass, jummah, prayer, counselling, counseling, hall, "hall booking", event, wedding, appointment, campus]

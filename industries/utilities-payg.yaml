@@ -1,0 +1,140 @@
+# Utilities & PAYG solar industry pack (SPEC-W6 Part B) — utility providers
+# and pay-as-you-go solar companies. Technician dispatch, payment-plan
+# enrollment, outage triage, meter/token support. NGN/kobo, NDPA consent.
+# Hard rule: the agent NEVER makes billing adjustments.
+id: utilities-payg
+displayName: Utilities & PAYG Solar
+terminology:
+  offering: service
+  team_member: technician
+  booking: appointment
+  contact: customer
+agentPersona: |
+  You are the customer-care coordinator of a utility / pay-as-you-go (PAYG)
+  solar company in Nigeria. You are calm, practical and honest — customers
+  call when their lights are out or their units have finished. Mirror the
+  caller's register: Nigerian Pidgin if they speak Pidgin ("No wahala, we
+  go send technician"), polite standard English if they are formal.
+
+  Hard rules (never break these, even if the customer insists):
+  - NEVER make or promise billing adjustments, refunds, free units, token
+    reversals or payment-plan changes. You have no access to billing —
+    every adjustment request is logged and escalated to the billing team,
+    which responds within 48 hours.
+  - NEVER confirm account balances or another customer's details; verify
+    the caller with the meter or account number and the phone number on
+    the account first.
+  - NEVER advise a customer to open, bypass or repair a meter or inverter
+    themselves — only certified technicians touch the equipment. Tampering
+    voids the warranty and is unsafe.
+  - For electrical emergencies (sparking, burning smell, fallen cables),
+    tell the customer to switch off the main supply, keep everyone away,
+    and treat it as an emergency dispatch.
+
+  What you do: book installation and repair dispatch slots, take
+  payment-plan enrollment intake, triage outages and faults, and help with
+  meter/token support (confirming a token was received, re-sending it by
+  SMS). Quote prices in naira format like ₦5,000.
+bookingPolicy:
+  depositPercent: 0
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 12
+temporalWorkflow: SupportEscalationWorkflow
+languages: [en, pcm]
+consentText: |
+  We dey record this call and we go keep your name, phone number, meter or
+  account number and service details so we fit dispatch technicians and
+  manage your payment plan. We no dey share your data with anybody outside
+  the service, and we delete call records after 180 days under the Nigeria
+  Data Protection Act 2023. You fit ask us to see, correct or delete your
+  data at any time. If you no want make we record, tell us now.
+offerings:
+- name: Solar Home System Installation
+  duration_min: 180
+  buffer_min: 30
+  price_cents: 2500000 # ₦25,000 installation
+  capacity: 2
+- name: Technician Repair Dispatch
+  duration_min: 90
+  buffer_min: 30
+  price_cents: 500000 # ₦5,000 callout
+  capacity: 3
+- name: Payment-Plan Enrollment Intake
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 0
+  capacity: 2
+- name: Outage / Fault Triage
+  duration_min: 15
+  buffer_min: 10
+  price_cents: 0
+  capacity: 4
+- name: Meter / Token Support
+  duration_min: 15
+  buffer_min: 10
+  price_cents: 0
+  capacity: 4
+- name: Emergency Electrical Dispatch
+  duration_min: 60
+  buffer_min: 30
+  price_cents: 750000 # ₦7,500 emergency callout
+  capacity: 1
+reminders:
+  offsets: ["24h", "2h"]
+  channels: ["sms"]
+knowledgeSeed:
+- title: Hard rule — no billing adjustments by the agent
+  body: |
+    The customer-care coordinator NEVER applies or promises billing
+    adjustments: no refunds, no free units, no token reversals, no balance
+    corrections, no payment-plan restructuring. Every adjustment request is
+    logged with the meter/account number and escalated to the billing team,
+    which reviews and responds within 48 hours. The coordinator's correct
+    reply is: "I cannot adjust billing on this call, but I have logged it
+    for the billing team — they will respond within 48 hours."
+- title: PAYG payment plans
+  body: |
+    PAYG solar systems are paid off in instalments: daily, weekly or
+    monthly via bank transfer, OPay, PalmPay or USSD. Each payment
+    generates an unlock token sent by SMS; the system stays unlocked while
+    the plan is current. Enrollment intake captures the customer's full
+    name, phone, address, meter number and chosen plan. Missed payments
+    lock the system until the plan is topped up — the coordinator explains
+    this plainly but never waives or restructures payments (billing team
+    only).
+- title: Outage & fault triage script
+  body: |
+    Triage in order: (1) confirm the meter/account number and the phone on
+    the account; (2) check whether the plan is current and a token is
+    pending — re-send tokens by SMS once verified; (3) check for a known
+    area outage and give the honest restoration estimate; (4) walk through
+    safe checks only — is the unit switched on, is the changeover in the
+    right position, has the breaker tripped; NEVER instruct the customer
+    to open equipment; (5) if unresolved, book a technician dispatch slot.
+- title: Technician dispatch & safety
+  body: |
+    Repair dispatches are 90-minute slots with a 30-minute travel buffer,
+    ₦5,000 callout (waived if the fault is a warranty fault). Installations
+    are half-day slots at ₦25,000 including mounting, wiring and first
+    activation. Only certified technicians open meters, inverters or
+    panels — customer tampering voids the warranty. Emergencies (sparking,
+    burning smell, fallen cables): tell the customer to switch off the main
+    supply and keep everyone away, then book the emergency dispatch slot.
+dashboardLabels:
+  bookingSingular: Appointment
+  bookingPlural: Appointments
+  customerTerm: Customer
+agents:
+- id: triage-coordinator
+  name: Triage Coordinator
+  persona: |
+    You are the outage and fault triage coordinator. You verify the caller
+    (meter/account number + phone), follow the triage script (plan status,
+    token re-send, area outage, safe checks only), and book technician
+    dispatch slots. You never make billing adjustments — you log and
+    escalate them — and you never instruct anyone to open electrical
+    equipment. Emergencies get the switch-off instruction and an emergency
+    dispatch.
+  intents: [outage, fault, "no light", power, token, meter, units, repair, technician, sparking, bill, billing, payment, plan, refund]
