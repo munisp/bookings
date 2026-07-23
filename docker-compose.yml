@@ -114,6 +114,11 @@ services:
       # Dev default keeps the stack bootable; prod MUST override via .env.
       PORTAL_SECRET: ${PORTAL_SECRET:-opendesk-dev-portal-secret-change-in-prod}
       NOTIFICATIONS_TOPIC: opendesk.notifications.outbox
+      # SPEC-W8 A1 geospatial: optional Nominatim geocoding hook (off by
+      # default) + geo campaign send batch size.
+      GEOCODE_ENABLED: ${GEOCODE_ENABLED:-false}
+      GEOCODE_BASE_URL: ${GEOCODE_BASE_URL:-https://nominatim.openstreetmap.org}
+      GEO_CAMPAIGN_BATCH: ${GEO_CAMPAIGN_BATCH:-50}
     ports:
     - 7002:7002
     networks:

@@ -23,7 +23,10 @@ services:
 
   # ---------------- Postgres 16 (SPEC §7) ----------------
   postgres:
-    image: postgres:16-alpine
+    # SPEC-W8 A1: postgis/postgis is a drop-in replacement for postgres:16
+    # (same entrypoint, user/db env, data layout) adding the PostGIS
+    # extension used by booking-service's geo tables.
+    image: postgis/postgis:16-3.4
     container_name: postgres
     restart: unless-stopped
     environment:
