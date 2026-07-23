@@ -15,7 +15,9 @@ export async function generateMetadata({
       `/api/bookings/public/sites/${siteSlug}`,
       { anonymous: true },
     );
-    return { title: `Book · ${site.business_name}` };
+    const brand =
+      site.theme?.brandName ?? site.theme?.brand_name ?? site.business_name;
+    return { title: `Book · ${brand}` };
   } catch {
     return { title: "Booking" };
   }

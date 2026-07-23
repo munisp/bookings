@@ -31,6 +31,10 @@ export function PublicBookingClient({
 }) {
   const accent = site.theme?.primaryColor ?? site.theme?.accent ?? "#7c5b3e";
   const logoUrl = site.theme?.logoUrl ?? site.theme?.logo_url;
+  // White-label (SPEC-W7 Part C): brand name overrides the tenant business
+  // name in the public header/footer when set in the theme editor.
+  const brandName =
+    site.theme?.brandName ?? site.theme?.brand_name ?? site.business_name;
   const heroTitle = site.theme?.heroTitle;
   const heroSubtitle = site.theme?.heroSubtitle ?? site.theme?.hero_blurb;
   const compact = embed || site.theme?.template === "compact";
@@ -124,13 +128,13 @@ export function PublicBookingClient({
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={logoUrl}
-                alt={`${site.business_name} logo`}
+                alt={`${brandName} logo`}
                 className="h-10 w-10 rounded-md border border-border object-contain"
               />
             ) : null}
             <div>
               <h1 className={cn("font-bold tracking-tight", compact ? "text-xl" : "text-3xl")}>
-                {site.business_name}
+                {brandName}
               </h1>
               {site.tagline ? (
                 <p className="mt-1 text-muted-foreground">{site.tagline}</p>
@@ -449,7 +453,7 @@ export function PublicBookingClient({
 
       {!embed ? (
         <footer className="border-t border-border py-6 text-center text-xs text-muted-foreground">
-          Powered by OpenDesk — open-source AI receptionist
+          {brandName} · Powered by OpenDesk — open-source AI receptionist
         </footer>
       ) : null}
 
