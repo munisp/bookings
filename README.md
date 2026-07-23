@@ -67,6 +67,7 @@ Observability profile: `docker compose -f infra/docker-compose.observability.yml
 | Warm handoff | Voice runtime escalates to a LiveKit room; dashboard toast lets staff join the call (`EscalationRequested` over `/ws`) |
 | Backups & observability | `infra/backups/` scripts + Prometheus/Grafana/OTel/Loki compose profile |
 | Nigeria messaging channels | Termii / Africa's Talking / WhatsApp Cloud API via the `messaging-gateway` service + Dapr HTTP bindings, with per-tenant channel routing in the notification-worker — see [docs/integrations/messaging-channels.md](docs/integrations/messaging-channels.md) |
+| Geospatial | PostGIS contact locations + service areas, Sedona gold geo marts, MapLibre/GeoLibre maps and geo-targeted campaigns — see [docs/geospatial.md](docs/geospatial.md) |
 
 ## Repository layout
 
