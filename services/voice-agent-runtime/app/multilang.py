@@ -24,6 +24,17 @@ voice runtime's pack consumption point (tenant_context._apply_pack ->
 validate_pack_languages) — invalid entries are dropped with a warning, never
 fatal. Declared languages bound the auto-switch set: detection outside the
 pack's list falls back to the tenant default language.
+
+Nigerian Pidgin (pcm) note: whisper has no distinct Pidgin detection —
+Pidgin speech is transcribed and reported as English (``en``). Pidgin is
+therefore handled at the PERSONA level via the industry pack
+(industries/nigeria-sme.yaml declares ``languages: [en, pcm]`` and its
+agentPersona carries the code-switching rules), NOT via a locale switch.
+If ``pcm`` ever appears as a detection or pack entry, :func:`pidgin_proxy`
+maps it to ``en`` so the locale instruction and Piper voice stay English.
+Likewise there is no Pidgin Piper voice: PIPER_VOICE_MAP has no ``pcm``
+entry, so Pidgin deployments speak with the configured English voice —
+that is the honest, intended behaviour until a pcm TTS voice exists.
 """
 
 from __future__ import annotations
@@ -58,7 +69,29 @@ LANGUAGE_NAMES = {
     "hi": "Hindi",
     "el": "Greek",
     "tr": "Turkish",
+    # Nigerian Pidgin (ISO-639-3 pcm). Whisper never reports pcm — Pidgin
+    # speech comes back as 'en' — so this name exists only for packs that
+    # declare languages: [en, pcm]; see pidgin_proxy() below and the module
+    # docstring. There is no Pidgin Piper voice (PIPER_VOICE_MAP falls back
+    # to the default English voice — honest limitation, documented).
+    "pcm": "Nigerian Pidgin",
 }
+
+# Whisper cannot detect Nigerian Pidgin distinctly: pcm audio is reported as
+# English. Pidgin is therefore a PERSONA-level concern (the industry pack's
+# agentPersona carries code-switching rules), not a locale-switch concern.
+# Any pcm that does reach the language pipeline (pack declaration, manual
+# override, a future STT engine) is proxied to English so the locale
+# instruction and TTS voice selection behave sanely.
+PIDGIN_CODES = frozenset({"pcm"})
+PIDGIN_PROXY_LANGUAGE = "en"
+
+
+def pidgin_proxy(code: str) -> str:
+    """Map Nigerian Pidgin (``pcm``) to its runtime proxy language (``en``);
+    every other code passes through unchanged. Expects an already-normalized
+    primary subtag (see :func:`normalize_language`)."""
+    return PIDGIN_PROXY_LANGUAGE if code in PIDGIN_CODES else code
 
 
 def normalize_language(code: str | None) -> str:
@@ -130,8 +163,13 @@ def resolve_turn_language(
 
     ``supported`` (pack ``languages``) bounds the auto-switch set: detection
     outside the list falls back to the tenant default. An empty/None list
-    means unconstrained (any detected language switches)."""
-    lang = normalize_language(detected)
+    means unconstrained (any detected language switches).
+
+    Nigerian Pidgin (``pcm``) detections are proxied to English
+    (:func:`pidgin_proxy`) BEFORE the supported-set check, so a pack that
+    declares ``languages: [en, pcm]`` matches pcm input without a locale
+    switch away from English."""
+    lang = pidgin_proxy(normalize_language(detected))
     if not lang:
         return default
     if supported and lang not in supported:
@@ -145,8 +183,11 @@ def resolve_turn_language(
 
 
 def locale_instruction(language: str) -> str:
-    """Per-turn LLM system-prompt instruction ("respond in {language}")."""
-    lang = normalize_language(language) or "en"
+    """Per-turn LLM system-prompt instruction ("respond in {language}").
+
+    Pidgin (pcm) is proxied to English: Pidgin register is driven by the
+    pack persona, not by a locale instruction (see module docstring)."""
+    lang = pidgin_proxy(normalize_language(language)) or "en"
     name = LANGUAGE_NAMES.get(lang, lang)
     return (
         "\nLANGUAGE (this turn)\n"
@@ -185,8 +226,12 @@ def voice_for_language(
     language: str, voice_map: dict[str, str], default_voice: str
 ) -> str:
     """Pick the piper voice for a language, gracefully falling back to the
-    default voice when the language has no mapping (or is empty)."""
-    lang = normalize_language(language)
+    default voice when the language has no mapping (or is empty).
+
+    No Pidgin Piper voice exists: pcm is proxied to English here, so a pcm
+    turn speaks with the configured English voice (or an explicit ``en``
+    entry in the voice map)."""
+    lang = pidgin_proxy(normalize_language(language))
     if lang and lang in voice_map:
         return voice_map[lang]
     return default_voice

@@ -152,3 +152,51 @@ class TestPackLanguages:
     def test_validate_directly(self):
         assert ml.validate_pack_languages(["EN", "es-MX"]) == ["en", "es"]
         assert ml.validate_pack_languages("nope") == []
+
+
+# --------------------------------------------------------------------------
+# Nigerian Pidgin (pcm) — persona-level, never a locale switch (NDPA pack)
+# --------------------------------------------------------------------------
+class TestPidgin:
+    def test_pcm_in_language_names(self):
+        assert ml.LANGUAGE_NAMES["pcm"] == "Nigerian Pidgin"
+
+    def test_pidgin_proxy(self):
+        assert ml.pidgin_proxy("pcm") == "en"
+        assert ml.pidgin_proxy("en") == "en"
+        assert ml.pidgin_proxy("es") == "es"
+        assert ml.pidgin_proxy("") == ""
+
+    def test_pcm_detection_proxies_to_english(self):
+        # whisper never reports pcm, but if a detection/manual override ever
+        # carries it, the next turn stays English (no locale switch to pcm).
+        state = ml.MultilangState(default_language="en", supported=["en", "pcm"])
+        assert state.observe("pcm") is False
+        assert state.active_language == "en"
+        assert state.instruction() == ""
+
+    def test_pcm_bounded_by_pack_languages(self):
+        # pcm detection on an [en, pcm] pack resolves to en, which is in the
+        # supported set; pcm is NOT itself activated.
+        assert ml.resolve_turn_language("pcm", default="en", supported=["en", "pcm"]) == "en"
+        assert ml.resolve_turn_language("pcm-NG", default="en", supported=["en", "pcm"]) == "en"
+        # On a pack without pcm/en the proxy result still bounds correctly.
+        assert ml.resolve_turn_language("pcm", default="fr", supported=["fr", "pcm"]) == "fr"
+
+    def test_pcm_locale_instruction_is_english(self):
+        instruction = ml.locale_instruction("pcm")
+        assert "Respond in English" in instruction
+
+    def test_pcm_voice_falls_back_to_english_voice(self):
+        # No Pidgin Piper voice exists: pcm speaks with the en mapping when
+        # present, else the default voice.
+        m = {"en": "en_US-lessac-medium"}
+        assert ml.voice_for_language("pcm", m, "en_GB-alan-medium") == "en_US-lessac-medium"
+        assert ml.voice_for_language("pcm", {}, "en_US-lessac-medium") == "en_US-lessac-medium"
+
+    def test_pack_pcm_languages_passthrough(self):
+        # The nigeria-sme pack declares [en, pcm]; both are valid entries and
+        # survive pack-consumption validation.
+        ctx = _ctx()
+        _apply_pack(ctx, {"pack": {"languages": ["en", "pcm"]}})
+        assert ctx.languages == ["en", "pcm"]
