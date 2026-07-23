@@ -72,6 +72,11 @@ func (a *Activities) NotifyPaced(ctx context.Context, req workflows.PacedSendReq
 			return fmt.Errorf("NotifyPaced %s: missing staff_alert payload", req.Kind)
 		}
 		return a.EscalateTicket(ctx, req.StaffAlert.Input)
+	case workflows.PacedSendGeoCampaign:
+		if req.GeoCampaign == nil {
+			return fmt.Errorf("NotifyPaced %s: missing geo_campaign payload", req.Kind)
+		}
+		return a.SendGeoCampaignMessage(ctx, *req.GeoCampaign)
 	default:
 		return fmt.Errorf("NotifyPaced: unknown send kind %q", req.Kind)
 	}

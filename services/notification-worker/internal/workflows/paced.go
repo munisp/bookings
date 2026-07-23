@@ -37,6 +37,14 @@ const (
 	// PacedSendStaffAlert routes to EscalateTicket (support-desk pack:
 	// SLA-breach escalation email + CRM priority event).
 	PacedSendStaffAlert = "staff_alert"
+	// PacedSendGeoCampaign routes to SendGeoCampaignMessage (SPEC-W8 A2:
+	// geo-targeted campaign sends, scheduled by booking-service's
+	// GeoCampaignWorkflow on this task queue).
+	PacedSendGeoCampaign = "geo_campaign"
+
+	// ActivitySendGeoCampaignMessage is the name of the geo campaign send
+	// activity.
+	ActivitySendGeoCampaignMessage = "SendGeoCampaignMessage"
 )
 
 // PacedSendRequest is the payload of the NotifyPaced activity: which send
@@ -52,6 +60,20 @@ type PacedSendRequest struct {
 	FollowUp     *PacedFollowupSend         `json:"follow_up,omitempty"`
 	Proposal     *PacedProposalReminderSend `json:"proposal,omitempty"`
 	StaffAlert   *PacedStaffAlertSend       `json:"staff_alert,omitempty"`
+	GeoCampaign  *PacedGeoCampaignSend      `json:"geo_campaign,omitempty"`
+}
+
+// PacedGeoCampaignSend carries the SendGeoCampaignMessage arguments
+// (SPEC-W8 A2). The JSON contract is duplicated by booking-service's
+// internal/geo package (service boundary: duplicated, not shared) — keep
+// the field tags in sync.
+type PacedGeoCampaignSend struct {
+	TenantSlug string `json:"tenant_slug"`
+	CampaignID string `json:"campaign_id"`
+	Channel    string `json:"channel"` // whatsapp | telegram | sms
+	Phone      string `json:"phone"`
+	Name       string `json:"name"`
+	Text       string `json:"text"` // {name} already substituted by the workflow
 }
 
 // PacedWaitlistSend carries the SendWaitlistClaimNotification arguments.

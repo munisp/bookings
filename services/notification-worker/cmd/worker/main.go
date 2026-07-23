@@ -78,6 +78,17 @@ func run() error {
 			PubSubName:     cfg.PubSubName,
 			CRMEventsTopic: cfg.CRMEventsTopic,
 		}, logger)
+	// Messaging channel routing (Nigeria channel): per-tenant provider
+	// selection for the sms/email channels — see
+	// docs/integrations/messaging-channels.md.
+	channelRouter, err := activities.NewChannelRouter(cfg.MessagingChannels, cfg.TenantChannelMap)
+	if err != nil {
+		return fmt.Errorf("messaging channel routing: %w", err)
+	}
+	acts.Channels = channelRouter
+	logger.Info("messaging channel routing configured",
+		zap.String("email_provider", channelRouter.Provider("email", "")),
+		zap.String("sms_provider", channelRouter.Provider("sms", "")))
 	// User-facing base URL for waitlist claim links (SPEC-W3 §3).
 	acts.PublicBaseURL = cfg.PublicBaseURL
 	// Outbound CPS pacer + sender rotation (VOICE-SCALING §4 telephony):
@@ -142,6 +153,9 @@ func run() error {
 	w.RegisterActivityWithOptions(acts.SendWaitlistClaimNotification, activity.RegisterOptions{Name: workflows.ActivitySendWaitlistClaimNote})
 	// Outbound pacing wrapper: all workflow sends go through it (VOICE-SCALING §4).
 	w.RegisterActivityWithOptions(acts.NotifyPaced, activity.RegisterOptions{Name: workflows.ActivityNotifyPaced})
+	// SPEC-W8 A2: geo-targeted campaign sends (scheduled by booking-service's
+	// GeoCampaignWorkflow via NotifyPaced kind geo_campaign).
+	w.RegisterActivityWithOptions(acts.SendGeoCampaignMessage, activity.RegisterOptions{Name: workflows.ActivitySendGeoCampaignMessage})
 	// Digital-twin cleanup activity (SPEC-W3 §3 innovation 12)
 	w.RegisterActivityWithOptions(acts.DeleteTwinTenant, activity.RegisterOptions{Name: workflows.ActivityDeleteTwinTenant})
 
