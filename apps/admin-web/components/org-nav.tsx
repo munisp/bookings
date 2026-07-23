@@ -17,6 +17,7 @@ import {
   BarChart3,
   LineChart,
   Webhook,
+  MessagesSquare,
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,7 @@ const items: NavItem[] = [
   { segment: "billing", label: "Billing", icon: CreditCard },
   { segment: "analytics", label: "Analytics", icon: BarChart3 },
   { segment: "webhooks", label: "Webhooks", icon: Webhook },
+  { segment: "channels", label: "Channels", icon: MessagesSquare },
   { external: CRM_URL, label: "CRM", icon: UsersRound },
   { external: GRAFANA_URL, label: "Grafana", icon: LineChart },
   { segment: "settings", label: "Settings", icon: Settings },
