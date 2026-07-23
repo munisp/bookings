@@ -21,6 +21,7 @@ import {
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { canViewAnalytics, canViewBilling } from "@/lib/roles";
 
 /** Self-hosted Twenty CRM UI (SPEC-CRM §A). */
 const CRM_URL = "http://localhost:3100";
@@ -58,13 +59,31 @@ const linkClass = (active: boolean) =>
       : "text-muted-foreground hover:bg-accent hover:text-foreground",
   );
 
-export function OrgNav({ orgSlug }: { orgSlug: string }) {
+export function OrgNav({
+  orgSlug,
+  roles = [],
+}: {
+  orgSlug: string;
+  /** caller's Keycloak realm roles (session.realmRoles) — gates nav entries */
+  roles?: string[];
+}) {
   const pathname = usePathname();
   const base = `/app/${orgSlug}`;
 
+  // Role-based visibility (SPEC-W7 Part C): billing is owner/billing only,
+  // analytics is owner/admin/analyst; staff/viewer see neither. The pages
+  // enforce the same rule server-side — this is the client-side hiding.
+  const visible = items.filter((item) => {
+    if ("segment" in item && item.segment === "billing")
+      return canViewBilling(roles);
+    if ("segment" in item && item.segment === "analytics")
+      return canViewAnalytics(roles);
+    return true;
+  });
+
   return (
     <nav className="flex flex-col gap-0.5 px-3">
-      {items.map((item) => {
+      {visible.map((item) => {
         const Icon = item.icon;
         if ("external" in item) {
           return (

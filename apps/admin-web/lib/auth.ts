@@ -20,6 +20,8 @@ declare module "next-auth" {
     accessToken?: string;
     /** Tenant slugs from the `tenant_slugs` claim (Keycloak group mapper). */
     tenantSlugs: string[];
+    /** Keycloak realm roles from the `realm_access.roles` claim. */
+    realmRoles: string[];
     error?: string;
   }
 }
@@ -30,6 +32,7 @@ declare module "@auth/core/jwt" {
     refresh_token?: string;
     expires_at?: number;
     tenant_slugs?: string[];
+    realm_roles?: string[];
     error?: string;
   }
 }
@@ -47,6 +50,16 @@ function decodeClaims(token: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+/** Extract Keycloak realm roles from a decoded access-token payload. */
+function realmRolesFromClaims(claims: Record<string, unknown>): string[] {
+  const realmAccess = claims.realm_access;
+  if (typeof realmAccess === "object" && realmAccess !== null) {
+    const roles = (realmAccess as { roles?: unknown }).roles;
+    if (Array.isArray(roles)) return roles.filter((r): r is string => typeof r === "string");
+  }
+  return [];
 }
 
 async function refreshAccessToken(token: {
@@ -70,6 +83,8 @@ async function refreshAccessToken(token: {
       access_token: refreshed.access_token,
       expires_at: Math.floor(Date.now() / 1000) + (refreshed.expires_in ?? 300),
       refresh_token: refreshed.refresh_token ?? token.refresh_token,
+      // Roles can change between refreshes; re-read them from the new token.
+      realm_roles: realmRolesFromClaims(decodeClaims(refreshed.access_token)),
       error: undefined,
     };
   } catch {
@@ -110,6 +125,7 @@ export const authConfig = {
           expires_at:
             account.expires_at ?? Math.floor(Date.now() / 1000) + 300,
           tenant_slugs: Array.isArray(slugs) ? (slugs as string[]) : [],
+          realm_roles: realmRolesFromClaims(claims),
           error: undefined,
         };
       }
@@ -123,6 +139,7 @@ export const authConfig = {
     async session({ session, token }) {
       session.accessToken = token.access_token;
       session.tenantSlugs = token.tenant_slugs ?? [];
+      session.realmRoles = token.realm_roles ?? [];
       session.error = token.error;
       return session;
     },

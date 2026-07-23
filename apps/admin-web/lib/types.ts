@@ -71,6 +71,18 @@ export interface SiteTheme {
   heroSubtitle?: string;
   /** layout template id, e.g. "classic" | "modern" | "compact" */
   template?: string;
+  /**
+   * White-label branding (SPEC-W7 Part C): display name shown on the public
+   * site header/footer instead of the tenant business name when set.
+   */
+  brandName?: string;
+  /** legacy snake_case companion of brandName for older readers */
+  brand_name?: string;
+  /**
+   * White-label custom domain the tenant intends to serve the public site
+   * from (informational note — the actual mapping lives at the gateway/DNS).
+   */
+  customDomain?: string;
 }
 
 // ---------- booking-service ----------
@@ -251,6 +263,70 @@ export interface Payout {
   /** Mojaloop transfer reference when settled cross-border. */
   rail_ref?: string | null;
   created_at: string;
+}
+
+// ---------- conversation-service ----------
+
+/** Conversation (conversation-service GET /v1/conversations). */
+export interface Conversation {
+  id: string;
+  tenant_id: string;
+  site_slug: string;
+  /** "voice" | "chat" | "phone" | "api" | "whatsapp" | "telegram" */
+  channel: string;
+  contact_phone?: string | null;
+  started_at: string;
+  ended_at?: string | null;
+}
+
+/** Conversation detail including scored turns (GET /v1/conversations/{id}). */
+export interface ConversationWithTurns extends Conversation {
+  turns: {
+    role: string;
+    text: string;
+    /** lexicon sentiment score in [-1, 1]; null when unscored */
+    sentiment?: number | null;
+    ts?: string;
+  }[];
+}
+
+// ---------- billing-engine (SPEC-W7 Part B) ----------
+
+export type InvoiceStatus =
+  | "draft"
+  | "issued"
+  | "paid"
+  | "void"
+  | "past_due"
+  | string;
+
+/** One rated usage line on an invoice (billing-engine line_items jsonb). */
+export interface InvoiceLineItem {
+  metric: string;
+  /** total metered units in the period */
+  quantity: number;
+  /** units covered by the plan quota */
+  included: number;
+  /** billable units = max(0, quantity - included) */
+  billable: number;
+  unit_price_cents: number;
+  amount_cents: number;
+}
+
+/** Invoice (billing-engine GET /v1/invoices). */
+export interface Invoice {
+  id: string;
+  tenant_id: string;
+  /** billing period, "YYYY-MM" */
+  period: string;
+  status: InvoiceStatus;
+  subtotal_cents: number;
+  currency: string;
+  line_items?: InvoiceLineItem[];
+  payment_ref?: string | null;
+  created_at: string;
+  issued_at?: string | null;
+  paid_at?: string | null;
 }
 
 // ---------- conversation / voice ----------

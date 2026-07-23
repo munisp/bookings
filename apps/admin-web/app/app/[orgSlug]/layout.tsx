@@ -70,7 +70,7 @@ export default async function OrgLayout({
           </div>
         </div>
         <div className="flex-1 overflow-y-auto py-3">
-          <OrgNav orgSlug={orgSlug} />
+          <OrgNav orgSlug={orgSlug} roles={session.realmRoles ?? []} />
         </div>
         <div className="space-y-1 border-t border-border p-3">
           <Link

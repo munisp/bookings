@@ -39,9 +39,15 @@ function withQuery(path: string, query?: Query): string {
 async function request<T>(
   method: string,
   path: string,
-  opts: { query?: Query; body?: unknown; signal?: AbortSignal } = {},
+  opts: {
+    query?: Query;
+    body?: unknown;
+    signal?: AbortSignal;
+    /** extra request headers, e.g. { "x-tenant-id": tenantId } for the billing-engine contract */
+    headers?: Record<string, string>;
+  } = {},
 ): Promise<T> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...(opts.headers ?? {}) };
   if (opts.body !== undefined) headers["content-type"] = "application/json";
   // booking-service resolves tenants via the X-Tenant-Slug header; the
   // ?tenant= query param is kept for other services that still read it.
@@ -72,14 +78,30 @@ async function request<T>(
 }
 
 export const api = {
-  get: <T>(path: string, query?: Query, signal?: AbortSignal) =>
-    request<T>("GET", path, { query, signal }),
-  post: <T>(path: string, body?: unknown, query?: Query) =>
-    request<T>("POST", path, { body, query }),
-  put: <T>(path: string, body?: unknown, query?: Query) =>
-    request<T>("PUT", path, { body, query }),
-  patch: <T>(path: string, body?: unknown, query?: Query) =>
-    request<T>("PATCH", path, { body, query }),
+  get: <T>(
+    path: string,
+    query?: Query,
+    signal?: AbortSignal,
+    headers?: Record<string, string>,
+  ) => request<T>("GET", path, { query, signal, headers }),
+  post: <T>(
+    path: string,
+    body?: unknown,
+    query?: Query,
+    headers?: Record<string, string>,
+  ) => request<T>("POST", path, { body, query, headers }),
+  put: <T>(
+    path: string,
+    body?: unknown,
+    query?: Query,
+    headers?: Record<string, string>,
+  ) => request<T>("PUT", path, { body, query, headers }),
+  patch: <T>(
+    path: string,
+    body?: unknown,
+    query?: Query,
+    headers?: Record<string, string>,
+  ) => request<T>("PATCH", path, { body, query, headers }),
   delete: <T>(path: string, query?: Query) =>
     request<T>("DELETE", path, { query }),
 };
