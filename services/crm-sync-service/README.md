@@ -16,6 +16,37 @@ segmentio/kafka-go. Listens on **:7010**, Dapr app-id `crm-sync` (sidecar
    | `opendesk.booking.events` | `…BookingRescheduled` | PATCH task `dueAt` (falls back to the full create path when no mapping exists) |
    | `opendesk.booking.events` | `…BookingCancelled` | PATCH task `status=DONE` + **Note** with the cancellation reason |
    | `opendesk.conversation.events` | `…ToolInvoked` (`tool=book_appointment`, status `accepted`/`ok`) | **Note** "Booked via AI receptionist" on the person — only when `detail` carries `phone`/`email`; voice-agent-runtime's current payload (`{offering_id, starts_at}`) has none, so the note is skipped (acked) by design |
+   | `opendesk.conversation.events` | `…SessionEnded` (with `quality` + `confirmed_phone`) | **Note** "📞 AI call summary" on the caller's person (fallback path — see *Sentiment-enriched notes* below); `sync_map(kind=quality_note)` |
+   | `opendesk.conversation.quality` | `…CallQualityEnriched` | Same note **with avg sentiment**: patches the fallback note in place, or creates it when the plain event was skipped; `sync_map(kind=quality_note)` |
+
+### Sentiment-enriched call-summary notes (Wave 5 #2, eventual consistency)
+
+The voice runtime does not compute sentiment — per-turn scores live in
+conversation-service's `turns` table (app/intel.py). So two events describe
+one ended call:
+
+1. `SessionEnded` on `opendesk.conversation.events` (voice-agent-runtime):
+   quality signals only, **no sentiment**. This service creates the call
+   summary note from it as a **fallback** so the CRM note exists even when
+   conversation-service is down or the call had no scored turns.
+2. `CallQualityEnriched` on `opendesk.conversation.quality`
+   (conversation-service, consumer group `conversation-sentiment`): the same
+   quality payload **plus `avg_sentiment`** and `turn_sentiment_count`. This
+   is the **preferred** path.
+
+Merge logic (dedupe by conversation id via `sync_map(kind=quality_note)`,
+conversation UUID → Twenty note id):
+
+- Enriched arrives after the fallback created the note → the note body is
+  **patched** in place to include `avg sentiment ±N.NN` (no duplicate).
+- Enriched arrives first (or the plain event was skipped for missing
+  quality/phone/person) → the enriched path **creates** the note; a late
+  plain `SessionEnded` sees the mapping and does nothing.
+
+Honest limitations: the two consumers run concurrently in one group, so a
+create/create race on near-simultaneous delivery can yield one duplicate
+note (never lost sentiment); and a call whose turns were never
+sentiment-scored keeps the fallback note without sentiment forever.
 2. **Serves HTTP**:
    - `GET /healthz` — liveness + Postgres ping
    - `GET /metrics` — Prometheus text format (`crm_sync_counter{name=…}`,
@@ -64,6 +95,7 @@ segmentio/kafka-go. Listens on **:7010**, Dapr app-id `crm-sync` (sidecar
 | `IDENTITY_EVENTS_TOPIC` | `opendesk.identity.events` | |
 | `BOOKING_EVENTS_TOPIC` | `opendesk.booking.events` | |
 | `CONVERSATION_EVENTS_TOPIC` | `opendesk.conversation.events` | |
+| `QUALITY_EVENTS_TOPIC` | `opendesk.conversation.quality` | CallQualityEnriched intake (Wave 5 #2) |
 | `CRM_EVENTS_TOPIC` | `opendesk.crm.events` | webhook egress topic (provisioned by `infra/kafka/create-topics.sh`) |
 | `CONSUMER_GROUP` | `crm-sync` | shared by the forward readers |
 | `REVERSE_CONSUMER_GROUP` | `crm-sync-reverse` | reverse worker group on `CRM_EVENTS_TOPIC` |
@@ -113,7 +145,9 @@ UUID → Twenty person id), `booking` (booking UUID → Twenty task id),
 `booking_task` (booking UUID → Twenty task id; reverse lookup for
 `task.updated` DONE webhooks), `booking_contact` (booking UUID → Twenty
 person id; used by `/v1/tasks` to
-resolve "the person of booking X"). A nil
+resolve "the person of booking X"), `quality_note` (conversation UUID →
+Twenty note id; dedupe between the SessionEnded fallback and the
+CallQualityEnriched note paths, Wave 5 #2). A nil
 tenant is stored as the zero UUID so the UNIQUE constraint dedupes correctly
 (Postgres treats NULLs as distinct). `last_synced_at` is stamped by every
 forward-sync `Put` and feeds the reverse worker's echo suppression.

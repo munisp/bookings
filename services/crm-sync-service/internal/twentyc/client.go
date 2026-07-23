@@ -440,3 +440,10 @@ func (c *Client) CreateNote(ctx context.Context, title, body, personID string) (
 	}
 	return id, nil
 }
+
+// UpdateNote patches a Note's title/body (used by the Wave 5 #2 merge path
+// when a sentiment-enriched CallQualityEnriched event arrives after the
+// plain SessionEnded fallback already created the call-summary note).
+func (c *Client) UpdateNote(ctx context.Context, id, title, body string) error {
+	return c.patch(ctx, "notes", id, map[string]string{"title": title, "body": body})
+}

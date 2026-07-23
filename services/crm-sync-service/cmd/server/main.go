@@ -86,6 +86,9 @@ func run() error {
 			consumer.New(cfg.KafkaBrokers, cfg.IdentityTopic, cfg.ConsumerGroup, cfg.DLQTopic, syncer.HandleIdentity, reg, logger),
 			consumer.New(cfg.KafkaBrokers, cfg.BookingTopic, cfg.ConsumerGroup, cfg.DLQTopic, syncer.HandleBooking, reg, logger),
 			consumer.New(cfg.KafkaBrokers, cfg.ConversationTopic, cfg.ConsumerGroup, cfg.DLQTopic, syncer.HandleConversation, reg, logger),
+			// Wave 5 #2: sentiment-enriched call-quality events (preferred
+			// call-summary note path; plain SessionEnded stays as fallback).
+			consumer.New(cfg.KafkaBrokers, cfg.QualityTopic, cfg.ConsumerGroup, cfg.DLQTopic, syncer.HandleQuality, reg, logger),
 			// GDPR erase tombstones (SPEC-W3 §2): deletes the Twenty person.
 			consumer.New(cfg.KafkaBrokers, cfg.PrivacyTopic, cfg.ConsumerGroup, cfg.DLQTopic, syncer.HandlePrivacy, reg, logger),
 			// Reverse direction: Twenty webhook events -> OpenDesk.
