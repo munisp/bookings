@@ -1,0 +1,39 @@
+# GeoLibre GIS workbench (SPEC-W8 Part B2) — OPTIONAL compose override.
+#
+# GeoLibre (ghcr.io/opengeos/geolibre) is the analyst GIS workbench used to
+# explore the Sedona-produced gold geo tables (gold.geo_demand_h3,
+# gold.geo_service_area_coverage, gold.geo_hourly_density) alongside the
+# service-area polygons. It is NOT part of the base stack; start it as an
+# override on top of the root compose file:
+#
+#   docker compose -f docker-compose.yml -f infra/compose/geolibre.compose.yml up -d geolibre
+#
+# Direct UI:   http://localhost:8085
+# Via gateway: http://localhost:9080/gis/   (route `gis-geolibre` in
+#              infra/apisix/apisix.yaml — standard Keycloak jwt + prefix
+#              strip, like /crm/*)
+#
+# Embedding in admin dashboards: use GeoLibre's `maponly` mode
+# (http://localhost:8085/?mode=maponly or /gis/?mode=maponly through the
+# gateway) for chrome-less map iframes — see docs/geospatial-infra.md.
+
+services:
+  geolibre:
+    image: ghcr.io/opengeos/geolibre:latest
+    container_name: opendesk-geolibre
+    restart: unless-stopped
+    environment:
+      # Sidecar DISABLED by default: GeoLibre can spawn a companion "sidecar"
+      # helper process (extra AI/copilot assistant panel). We run it headless
+      # as a pure GIS workbench. To enable the sidecar, set
+      # GEOLIBRE_DISABLE_SIDECAR=0 (or remove this variable) in .env.
+      GEOLIBRE_DISABLE_SIDECAR: ${GEOLIBRE_DISABLE_SIDECAR:-1}
+      # Pre-seed the default view on the primary demo market (Lagos).
+      GEOLIBRE_MAP_CENTER: ${GEOLIBRE_MAP_CENTER:-6.5244,3.3792}
+      GEOLIBRE_MAP_ZOOM: ${GEOLIBRE_MAP_ZOOM:-11}
+    ports:
+      - 8085:8085
+    # Joins the `opendesk` network defined by the root docker-compose.yml
+    # (no re-declaration needed when used as a -f override).
+    networks:
+      - opendesk

@@ -106,3 +106,70 @@ models:
         tests: [not_null]
       - name: total_value
         tests: [not_null]
+
+  - name: geo_demand_h3
+    description: >
+      Bookings per H3 res-8 cell per tenant per day, with the cell polygon as
+      WKT (SPEC-W8 Part B1). Written by the Spark geo_analytics job
+      (Apache Sedona ST_H3CellIDs); this model is a passthrough view.
+    tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "bookings >= 0"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: day
+        tests: [not_null]
+      - name: h3_cell
+        description: H3 res-8 cell id (uint64/bigint).
+        tests: [not_null]
+      - name: h3_cell_str
+        description: H3 string index (hex of h3_cell) for JS/Trino interop.
+      - name: cell_wkt
+        description: Cell polygon as WKT; Trino ST_GeometryFromText(cell_wkt).
+      - name: bookings
+
+  - name: geo_service_area_coverage
+    description: >
+      Bookings inside vs outside each tenant service area per day (ST_Within
+      spatial join in the Spark geo_analytics job against the service-areas
+      extract; SPEC-W8 Part B1). Passthrough view.
+    tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "bookings_inside >= 0 and bookings_outside >= 0"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "coverage_share >= 0 and coverage_share <= 1"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: day
+        tests: [not_null]
+      - name: service_area_id
+        tests: [not_null]
+      - name: service_area_name
+      - name: bookings_inside
+      - name: bookings_outside
+      - name: coverage_share
+
+  - name: geo_hourly_density
+    description: >
+      Demand heat cells by hour-of-week (day_of_week 1=Sunday..7=Saturday,
+      hour 0-23) per H3 res-8 cell for staffing heatmaps. Written by the
+      Spark geo_analytics job; passthrough view. No cell geometry — join to
+      geo_demand_h3 on h3_cell.
+    tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "day_of_week between 1 and 7 and hour between 0 and 23 and bookings >= 0"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: day_of_week
+      - name: hour
+      - name: h3_cell
+        tests: [not_null]
+      - name: h3_cell_str
+      - name: bookings
