@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/opendesk/messaging-gateway/internal/channel"
 	"github.com/opendesk/messaging-gateway/internal/config"
 	"github.com/opendesk/messaging-gateway/internal/httpapi"
 	"github.com/opendesk/messaging-gateway/internal/metrics"
@@ -59,13 +60,33 @@ func run() error {
 			Token:         cfg.WhatsAppToken,
 			PhoneNumberID: cfg.WhatsAppPhoneNumberID,
 		},
-		Metrics: reg,
-		Log:     logger,
+		Telegram: &provider.Telegram{
+			Client:  provider.NewClient("telegram", reg, logger),
+			BaseURL: cfg.TelegramBaseURL,
+			Token:   cfg.TelegramBotToken,
+		},
+		WhatsAppVerifyToken:   cfg.WhatsAppVerifyToken,
+		TelegramBotUsername:   cfg.TelegramBotUsername,
+		TelegramWebhookSecret: cfg.TelegramWebhookSecret,
+		Metrics:               reg,
+		Log:                   logger,
 	}
+
+	// Omnichannel inbound bridge (SPEC-W6 Part A): wired whenever
+	// CHANNEL_SITE_MAP parses (empty map = inbound disabled, webhooks drop).
+	siteMap, err := channel.ParseSiteMap(cfg.ChannelSiteMap)
+	if err != nil {
+		return err
+	}
+	convBase, voiceBase := channel.ResolveBases(cfg.ConversationURL, cfg.VoiceRuntimeURL, cfg.DaprHTTPPort)
+	srv.Bridge = channel.NewBridge(siteMap, convBase, voiceBase, srv.WhatsApp, srv.Telegram, logger)
+
 	logger.Info("messaging-gateway configured",
 		zap.Bool("termii", srv.Termii.Configured()),
 		zap.Bool("africastalking", srv.AT.Configured()),
-		zap.Bool("whatsapp", srv.WhatsApp.Configured()))
+		zap.Bool("whatsapp", srv.WhatsApp.Configured()),
+		zap.Bool("telegram", srv.Telegram.Configured()),
+		zap.Int("site_map_entries", len(siteMap)))
 
 	hs := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
