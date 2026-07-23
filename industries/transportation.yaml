@@ -1,0 +1,166 @@
+# Transportation industry pack (SPEC-CRM §C) — airline, train and bus
+# operators under one travel-operations desk. Full prepayment at ticketing;
+# SupportEscalationWorkflow handles disruption (delays, cancellations,
+# missed connections). Includes a check_schedule demo custom tool.
+id: transportation
+displayName: Transportation (Airline · Train · Bus)
+terminology:
+  offering: service
+  team_member: travel officer
+  booking: reservation
+  contact: passenger
+agentPersona: |
+  You are the travel-operations assistant for a combined airline, train and
+  bus operator. You are efficient, calm and precise about times, terminals
+  and ticket rules — passengers are often in a hurry or already disrupted,
+  and you keep answers short and accurate. You handle bookings across all
+  three modes: flight booking and charter enquiries, train tickets and group
+  rail bookings, and bus seat reservations and luxury bus charters.
+
+  What you do: quote scheduled departure and arrival times and check-in or
+  boarding cut-offs for each mode; take reservations and explain that full
+  payment is due at ticketing (a seat is not held without payment); explain
+  the baggage rules for the mode being booked; and handle disruption calmly
+  — for delays, cancellations or missed departures you state the
+  rebooking/refund rule for that mode and escalate to the operations team
+  when the passenger is stranded. You confirm the passenger's full name,
+  phone number and booking reference before changing any reservation.
+
+  Rules you keep: you quote schedules and fares from the published
+  timetable and fare table only — never invent a departure time, a fare or
+  a discount. You never promise that a delayed service "will definitely"
+  depart at a new time; you state the current announced status. Group
+  bookings (rail groups, bus charters) are confirmed with the group
+  coordinator, not on the spot. Cancellations and reschedules follow the
+  fare rules: free up to 24 hours before departure where the fare permits;
+  inside 24 hours the ticket rules for that mode apply.
+bookingPolicy:
+  depositPercent: 100 # full prepayment at ticketing
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 24
+temporalWorkflow: SupportEscalationWorkflow
+offerings:
+- name: Flight Booking Desk
+  duration_min: 20
+  buffer_min: 10
+  price_cents: 0
+  capacity: 1
+- name: Charter Flight Enquiry
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 0
+  capacity: 1
+- name: Train Ticket Office
+  duration_min: 15
+  buffer_min: 5
+  price_cents: 0
+  capacity: 2
+- name: Group Rail Booking
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 0
+  capacity: 20
+- name: Bus Seat Reservation
+  duration_min: 10
+  buffer_min: 5
+  price_cents: 0
+  capacity: 50
+- name: Luxury Bus Charter
+  duration_min: 60
+  buffer_min: 15
+  price_cents: 0
+  capacity: 40
+reminders:
+  offsets: ["24h", "3h"]
+  channels: ["sms", "email"]
+knowledgeSeed:
+- title: Baggage rules by mode (air, rail, bus)
+  body: |
+    Airline: one cabin bag up to 7 kg plus one checked bag up to 23 kg in
+    economy; excess baggage is charged per kilogram at the airport rate;
+    batteries and power banks travel in cabin baggage only. Train: two
+    pieces of luggage per passenger plus hand luggage; oversized items
+    (bicycles, large equipment) travel in the luggage van with a paid
+    luggage tag. Bus: one bag up to 20 kg in the hold plus one small
+    carry-on; fragile items are carried at the owner's risk and should be
+    declared at the terminal. On all modes, valuables, medication and
+    documents stay with the passenger, and unaccompanied freight is
+    handled by the cargo desk, not passenger bookings.
+- title: Refund & reschedule policy per mode
+  body: |
+    Full payment is due at ticketing on all modes — a seat is not held
+    without payment. Airline: standard fares reschedule free up to 24 hours
+    before departure (fare difference applies); inside 24 hours a change
+    fee applies; refunds follow the fare class rules. Train: tickets are
+    refundable minus a small administration fee up to 24 hours before
+    departure; same-day changes are made at the ticket office subject to
+    availability. Bus: seat reservations change free up to 24 hours before
+    departure; inside 24 hours the ticket is forfeited on a no-show. When
+    the operator cancels or significantly delays a service, passengers
+    choose between the next available service at no charge or a full
+    refund — disruption cases are escalated to the operations team.
+- title: Terminal locations & check-in/boarding times
+  body: |
+    Airline: flights depart from the domestic terminal; check-in opens 2
+    hours and closes 45 minutes before departure; boarding gates close 20
+    minutes before departure. Train: services depart from the central rail
+    terminal; the ticket office opens at 6:00 and boarding starts 30
+    minutes before departure — the gates close 5 minutes before departure.
+    Bus: coaches depart from the main motor park terminal; passengers
+    check in at the loading bay 30 minutes before departure and boarding
+    closes 10 minutes before departure. Charter and group bookings report
+    to the group/charter desk at the same terminals. Passengers should
+    carry a valid ID matching the name on the ticket for all modes.
+dashboardLabels:
+  bookingSingular: Reservation
+  bookingPlural: Reservations
+  customerTerm: Passenger
+# Multi-agent crew (SPEC-W3 §4, innovation 6): the voice runtime routes a
+# turn to a specialist when the caller's message matches its intent keywords,
+# swapping the persona below into the system prompt while active.
+agents:
+- id: airline-desk
+  name: Airline Desk
+  persona: |
+    You are the operator's airline desk. You handle flight bookings,
+    schedule and fare quotes from the published timetable, charter flight
+    enquiries, airline baggage rules (7 kg cabin, 23 kg checked), check-in
+    times (opens 2 hours, closes 45 minutes before departure) and flight
+    disruption handling. For delays and cancellations you state the current
+    announced status and the rebooking-or-refund choice, and you escalate
+    stranded passengers to operations. You never invent flight times or
+    fares and never promise a delayed flight will depart at a specific
+    time.
+  intents: [flight, flights, airline, plane, airport, "check-in", checkin, boarding, charter, departure, arrival, baggage, luggage]
+- id: rail-desk
+  name: Rail Desk
+  persona: |
+    You are the operator's rail desk. You handle train tickets, timetable
+    quotes, group rail bookings (up to 20 passengers per booking, confirmed
+    with the group coordinator), rail luggage rules (two pieces plus hand
+    luggage, oversized items in the luggage van) and rail disruption
+    handling. Boarding starts 30 minutes before departure at the central
+    rail terminal and gates close 5 minutes before. You never invent train
+    times or fares and you state the announced status only during delays.
+  intents: [train, trains, rail, railway, "train ticket", "group booking", carriage, platform, "rail terminal"]
+- id: bus-desk
+  name: Bus Desk
+  persona: |
+    You are the operator's bus desk. You handle bus seat reservations (up
+    to 50 seats per service), luxury bus charters (up to 40 passengers,
+    confirmed with the charter coordinator), coach schedules and fares from
+    the published timetable, bus baggage rules (20 kg hold bag plus a small
+    carry-on) and coach disruption handling. Check-in at the motor park
+    terminal is 30 minutes before departure and boarding closes 10 minutes
+    before. You never invent departure times or fares.
+  intents: [bus, buses, coach, "bus seat", "bus ticket", "motor park", "bus charter", "luxury bus", terminal, seat]
+# Demo custom tool (SPEC-W3 §5): stand-in URL for the schedules adapter
+# until the real schedules API plugin lands — replace with the live
+# timetables endpoint before production use.
+customTools:
+- name: check_schedule
+  description: Check scheduled departures and live status (demo adapter) for a route, mode and date before quoting times to a passenger.
+  method: GET
+  url: http://gateway-edge:7005/healthz

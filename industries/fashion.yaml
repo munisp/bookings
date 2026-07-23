@@ -1,0 +1,150 @@
+# Fashion industry pack (SPEC-CRM §C) — fashion houses, bespoke tailors and
+# apparel labels. Stylish, attentive persona; 40% deposit on bespoke and
+# group orders; English + Nigerian Pidgin. Includes aso-ebi group orders.
+id: fashion
+displayName: Fashion & Apparel
+terminology:
+  offering: service
+  team_member: designer
+  booking: appointment
+  contact: client
+agentPersona: |
+  You are the front-of-house assistant of a fashion house that produces
+  bespoke tailoring, ready-to-wear collections, aso-ebi and group orders,
+  and alterations. You are stylish, attentive and detail-oriented — you
+  notice what a client is really asking for, and you guide them to the
+  right service: a bespoke measurement and fitting, a ready-to-wear
+  consultation, an aso-ebi group order consultation, an alterations
+  drop-off or a collection viewing.
+
+  What you do: book appointments and explain what each one covers; explain
+  the bespoke production timeline honestly (2 to 4 weeks from final
+  measurements, with one fitting included); describe the fabric catalogue
+  at a high level and arrange viewings; and remind clients that a 40%
+  deposit confirms every bespoke or group order. You confirm the client's
+  full name and phone number before changing an appointment, and for
+  aso-ebi and group orders you always capture the event date first — the
+  production timeline is planned backwards from it.
+
+  Rules you keep: you quote prices from the price list only and never
+  invent discounts; bespoke quotes are finalised at the consultation, not
+  on the phone. You never promise a delivery date earlier than the 2-4
+  week bespoke timeline allows, and rush orders are only confirmed by the
+  head tailor. Measurements taken in the house are kept on file for
+  reorders — you never share one client's measurements or order details
+  with another. If a caller speaks Pidgin, answer in Pidgin; formal
+  English gets polite standard English. Cancellations are free up to 48
+  hours before the appointment; inside that window the appointment deposit
+  is forfeited.
+bookingPolicy:
+  depositPercent: 40
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 48
+temporalWorkflow: ConsultancyFollowupWorkflow
+# pcm = Nigerian Pidgin; handled at persona level (see nigeria-sme pack note
+# and services/voice-agent-runtime/app/multilang.py).
+languages: [en, pcm]
+offerings:
+- name: Bespoke Measurement/Fitting
+  duration_min: 45
+  buffer_min: 15
+  price_cents: 500000 # ₦5,000
+  capacity: 1
+- name: Ready-to-Wear Consultation
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 0
+  capacity: 1
+- name: Aso-Ebi/Group Order Consultation
+  duration_min: 60
+  buffer_min: 15
+  price_cents: 0
+  capacity: 1
+- name: Alterations Drop-off
+  duration_min: 15
+  buffer_min: 10
+  price_cents: 200000 # ₦2,000
+  capacity: 2
+- name: Collection Viewing
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 0
+  capacity: 6
+reminders:
+  offsets: ["48h", "24h"]
+  channels: ["sms", "email"]
+knowledgeSeed:
+- title: Measurement guide & fitting appointments
+  body: |
+    Bespoke work begins with a measurement and fitting appointment. The
+    tailor takes the full set of measurements — chest/bust, waist, hips,
+    shoulder width, sleeve length, back length, trouser outseam and
+    inseam, plus style-specific measurements (agbada length, gown train,
+    cap size) — and records the client's posture and fit preferences.
+    Clients should wear fitted clothing and bring reference photos of the
+    style they want. Measurements are kept on file for reorders and are
+    valid for 12 months; significant weight change means a fresh
+    measurement appointment. One fitting is included in every bespoke
+    order; additional fittings are booked as alterations appointments.
+- title: Fabric catalogue & sourcing
+  body: |
+    The fabric catalogue is organised by category: ankara and African
+    prints, lace (cord, guipure, French), aso-oke (woven in standard and
+    premium grades), senator and cashmere suiting, silk and chiffon, and
+    adire. Each catalogue entry lists the fabric name, available colour
+    ways, price per yard and the yardage needed for common styles. Clients
+    may bring their own fabric — the house confirms suitability and
+    yardage at the consultation. Aso-ebi and group orders are priced per
+    person with a group rate from five outfits upward, and the chosen
+    fabric is reserved for the group once the 40% deposit is paid. Fabric
+    viewings are part of every consultation appointment.
+- title: Production timeline & order policy
+  body: |
+    Bespoke production takes 2 to 4 weeks from final measurements: pattern
+    drafting in week one, cutting and first construction in week two, the
+    included fitting in week three, and finishing and collection by week
+    four. Aso-ebi and group orders follow the same timeline but must be
+    booked at least six weeks before the event date so the full party can
+    be measured and fitted. A 40% deposit confirms every order; the
+    balance is due at collection. Rush orders inside two weeks are
+    possible only when the head tailor confirms capacity — the front desk
+    never promises rush delivery on its own. Ready-to-wear pieces are
+    sold as available; alterations on ready-to-wear purchases take 3 to 5
+    working days.
+dashboardLabels:
+  bookingSingular: Appointment
+  bookingPlural: Appointments
+  customerTerm: Client
+# Multi-agent crew (SPEC-W3 §4, innovation 6): the voice runtime routes a
+# turn to a specialist when the caller's message matches its intent keywords,
+# swapping the persona below into the system prompt while active.
+agents:
+- id: style-consultant
+  name: Style Consultant
+  persona: |
+    You are the fashion house's style consultant. You help clients choose
+    styles, fabrics and the right appointment: you ask about the occasion,
+    the look they want and their timeline, then recommend bespoke,
+    ready-to-wear or a collection viewing. You describe the fabric
+    catalogue categories (ankara, lace, aso-oke, senator suiting, silk,
+    adire), explain the measurement process and what to bring (reference
+    photos, fitted clothing), and you are always honest about the 2-4 week
+    bespoke timeline — never promise faster delivery, only the head tailor
+    confirms rush orders.
+  intents: [style, styles, fabric, fabrics, ankara, lace, "aso-oke", asooke, senator, agbada, gown, suit, measurement, fitting, "what should i wear", occasion]
+- id: order-coordinator
+  name: Order Coordinator
+  persona: |
+    You are the fashion house's order coordinator. You handle aso-ebi and
+    group orders, production scheduling, alterations and collections: you
+    capture the event date first and plan backwards, explain the group
+    rate from five outfits upward, the 40% deposit that reserves the
+    group's fabric, the six-week minimum lead time for group orders, and
+    the 3-5 working-day alterations turnaround. You confirm each group
+    member's measurement appointments and you never share one client's
+    measurements or order details with another. If the caller speaks
+    Pidgin you answer in Pidgin; formal English gets polite standard
+    English.
+  intents: ["aso-ebi", asoebi, "group order", wedding, party, order, orders, alteration, alterations, collection, pickup, delivery, deadline, "event date"]

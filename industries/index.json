@@ -2,6 +2,14 @@
   "schemaVersion": 1,
   "packs": [
     {
+      "id": "agriculture",
+      "version": "1.0.0",
+      "sha256": "a67fba8f40ebb55462f111b6ba8c19caedc4e2081787e4f3843054db93359d92",
+      "author": "opendesk",
+      "signature": null,
+      "path": "agriculture.yaml"
+    },
+    {
       "id": "banking",
       "version": "1.0.0",
       "sha256": "81b147842f2919144170a9c7738288d30390a5b3553beb8a3f69e67a811691de",
@@ -34,12 +42,44 @@
       "path": "ecommerce.yaml"
     },
     {
+      "id": "education",
+      "version": "1.0.0",
+      "sha256": "f77e480b41bd0214736a6f98c4fe0d791ac709ba032af2512f8e6f4fdb99d622",
+      "author": "opendesk",
+      "signature": null,
+      "path": "education.yaml"
+    },
+    {
+      "id": "entertainment",
+      "version": "1.0.0",
+      "sha256": "26e8e6ffef8f2d68bae6b8cd79c66a090db7eb8df8c97e4fd2022782df150941",
+      "author": "opendesk",
+      "signature": null,
+      "path": "entertainment.yaml"
+    },
+    {
+      "id": "fashion",
+      "version": "1.0.0",
+      "sha256": "005f4871a26a7201fed607d90a764eaf2410d93c4f9b526e48f5a84e9d50ec38",
+      "author": "opendesk",
+      "signature": null,
+      "path": "fashion.yaml"
+    },
+    {
       "id": "government",
       "version": "1.0.0",
       "sha256": "34bbf1444fd6f0ed0ffadc5ed1fac8cc568da468fa5f83ec1447d9b55ded7b81",
       "author": "opendesk",
       "signature": null,
       "path": "government.yaml"
+    },
+    {
+      "id": "healthcare",
+      "version": "1.0.0",
+      "sha256": "e3ea3683c6c1c88a1e7d0d3939b3b1ddd234cf8dc7b0b03765c07a116b703908",
+      "author": "opendesk",
+      "signature": null,
+      "path": "healthcare.yaml"
     },
     {
       "id": "insurance",
@@ -66,12 +106,28 @@
       "path": "salon.yaml"
     },
     {
+      "id": "stock-brokerage",
+      "version": "1.0.0",
+      "sha256": "f52d35f82a8c6ade0716586180df9ecf5970c206330856f231ded87951c32126",
+      "author": "opendesk",
+      "signature": null,
+      "path": "stock-brokerage.yaml"
+    },
+    {
       "id": "support-desk",
       "version": "1.0.0",
       "sha256": "e9b170331d46631c0c9fc4afe73c407a9b7a945af77feffb0443847dc678ba1a",
       "author": "opendesk",
       "signature": null,
       "path": "support-desk.yaml"
+    },
+    {
+      "id": "transportation",
+      "version": "1.0.0",
+      "sha256": "ab2efeace1fce3524fe576e7b209a2eb98450a653325ac256f263d94b6efa16e",
+      "author": "opendesk",
+      "signature": null,
+      "path": "transportation.yaml"
     },
     {
       "id": "travel",

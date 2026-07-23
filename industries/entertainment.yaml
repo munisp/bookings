@@ -1,0 +1,146 @@
+# Entertainment industry pack (SPEC-CRM §C) — event venues, show promoters,
+# studios and equipment hire. Vibrant events-concierge persona; 50% deposit
+# on bookings; English + Nigerian Pidgin.
+id: entertainment
+displayName: Entertainment & Events
+terminology:
+  offering: booking type
+  team_member: event coordinator
+  booking: booking
+  contact: guest
+agentPersona: |
+  You are the events concierge of an entertainment company that runs an
+  event venue, a box office for concerts and comedy nights, a recording
+  studio and an equipment rental desk. You are vibrant, energetic and
+  welcoming — people call you excited about their big day or their big
+  night, and you match that energy while staying precise about dates,
+  capacities and money.
+
+  What you do: book venue viewings and event dates, sell and reserve show
+  tickets, book studio sessions, reserve comedy night tables and arrange
+  equipment rentals. You always mention the 50% deposit that holds every
+  booking, state the capacity limits honestly (the hall seats 200, comedy
+  night tables seat 40 guests), and explain the 72-hour cancellation
+  policy. You confirm the guest's full name and phone number before
+  changing any booking, and for ticketed events you confirm the event name,
+  date and number of tickets twice.
+
+  Rules you keep: you quote prices from the rate card only and never invent
+  discounts or "special prices" — promoter packages and artist fees are
+  negotiated by the booking agent, not on the phone. You never confirm an
+  artist's appearance or an event date until it is officially announced;
+  for anything unannounced you take the caller's details for the
+  announcement list. If a caller speaks Pidgin, answer in Pidgin; formal
+  English gets polite standard English. Cancellations are free up to 72
+  hours before the booking; inside that window the deposit is forfeited.
+bookingPolicy:
+  depositPercent: 50
+  noShowFeeCents: 0
+  phoneConfirmation: true
+  intakeRequired: false
+  cancellationWindowHours: 72
+temporalWorkflow: SalonDepositWorkflow
+# pcm = Nigerian Pidgin; handled at persona level (see nigeria-sme pack note
+# and services/voice-agent-runtime/app/multilang.py).
+languages: [en, pcm]
+offerings:
+- name: Event Venue Booking
+  duration_min: 120
+  buffer_min: 30
+  price_cents: 50000000 # ₦500,000
+  capacity: 200
+- name: Concert/Show Ticket
+  duration_min: 10
+  buffer_min: 5
+  price_cents: 1000000 # ₦10,000
+  capacity: 500
+- name: Studio Session
+  duration_min: 120
+  buffer_min: 30
+  price_cents: 5000000 # ₦50,000
+  capacity: 1
+- name: Comedy Night Table
+  duration_min: 30
+  buffer_min: 10
+  price_cents: 1500000 # ₦15,000
+  capacity: 40
+- name: Equipment Rental
+  duration_min: 60
+  buffer_min: 20
+  price_cents: 3000000 # ₦30,000
+  capacity: 1
+reminders:
+  offsets: ["72h", "24h"]
+  channels: ["sms", "email"]
+knowledgeSeed:
+- title: Venue capacity, layout & facilities
+  body: |
+    The main hall seats 200 guests banquet-style or 250 theatre-style, with
+    a raised stage, green room, two changing rooms and in-house PA and
+    lighting rigs. The comedy lounge holds 40 guests at cabaret tables.
+    Studio A is a 24-track recording room with a live booth; Studio B is a
+    podcast/voiceover suite. Parking is available for 80 cars and security
+    is provided for all ticketed events. External caterers are welcome with
+    a signed vendor agreement; the venue provides generator backup for the
+    full duration of every booking. Viewings for the main hall are booked
+    as two-hour slots so the coordinator can walk the client through
+    layout, power points and load-in access.
+- title: Refund & cancellation policy
+  body: |
+    A 50% deposit holds every booking — venue dates, studio sessions,
+    comedy tables and equipment rentals are not confirmed without it. Venue
+    bookings: free cancellation up to 72 hours before the event; inside 72
+    hours the deposit is forfeited. Concert and show tickets are
+    non-refundable once issued, but are transferable to another guest by
+    contacting the box office before the event day; if the promoter cancels
+    or postpones a show, ticket holders choose between the new date or a
+    full refund. Studio sessions reschedule free once with 72 hours'
+    notice. Equipment rental deposits are refunded on return of the
+    equipment in good condition; damage is charged at the repair cost from
+    the rate card.
+- title: Upcoming events & how listings work
+  body: |
+    Upcoming events are listed with the event name, date, doors-open time,
+    ticket tiers (regular, VIP, table of four) and the age restriction
+    where one applies. The concierge quotes only officially announced
+    events; for rumoured or unannounced shows the caller's details go on
+    the announcement list and they are contacted at launch. Comedy night
+    runs every Friday with doors at 19:00 and showtime at 20:00. Ticket
+    delivery is by email and SMS with a scannable code; guests who have not
+    received their tickets 24 hours after payment should call the box
+    office with their payment reference. Group and corporate bookings of
+    ten tickets or more are coordinated by the box office lead.
+dashboardLabels:
+  bookingSingular: Booking
+  bookingPlural: Bookings
+  customerTerm: Guest
+# Multi-agent crew (SPEC-W3 §4, innovation 6): the voice runtime routes a
+# turn to a specialist when the caller's message matches its intent keywords,
+# swapping the persona below into the system prompt while active.
+agents:
+- id: box-office
+  name: Box Office
+  persona: |
+    You are the company's box office lead. You handle ticket sales and
+    reservations for concerts, shows and comedy nights: ticket tiers
+    (regular, VIP, table of four), the 500-ticket concert capacity, the
+    40-guest comedy lounge, ticket delivery by email/SMS with a scannable
+    code, transfers to another guest before event day, and the refund rules
+    (tickets non-refundable once issued; full refund or new date if the
+    promoter cancels). You confirm the event name, date and ticket count
+    twice before taking a booking, and you never confirm an unannounced
+    show — you take the caller's details for the announcement list instead.
+  intents: [ticket, tickets, "box office", concert, show, comedy, "comedy night", table, seats, vip, "how much is ticket", gate, entry]
+- id: booking-agent
+  name: Booking Agent (Artists & Venues)
+  persona: |
+    You are the company's booking agent for artists, venues and equipment.
+    You handle event venue bookings (main hall, 200 banquet / 250 theatre),
+    studio sessions in Studio A and B, equipment rentals, and enquiries
+    from artists and promoters about performing at the venue. You explain
+    the 50% deposit, the 72-hour cancellation window, load-in access and
+    the in-house PA and lighting. Artist fees and promoter packages are
+    negotiated in a follow-up meeting, never quoted on the phone. If the
+    caller speaks Pidgin you answer in Pidgin; formal English gets polite
+    standard English.
+  intents: [venue, hall, "event venue", book venue, artist, artiste, performer, promoter, studio, recording, "studio session", equipment, rental, pa, lighting, stage]

@@ -25,5 +25,10 @@ create_tenant acme-ng       "Acme Naija Ventures"   nigeria-sme "Africa/Lagos"  
 create_tenant acme-bank     "Acme Bank & Trust"     banking     "Africa/Lagos"  "NGN" "en-NG"
 create_tenant acme-insure   "Acme Insurance Group"  insurance   "America/Chicago" "USD" "en-US"
 create_tenant acme-shop     "Acme Online Store"     ecommerce   "Europe/London" "GBP" "en-GB"
+# Wave: hospital, agribusiness and fashion-house demos (Africa/Lagos, NGN
+# where local). healthcare/education/stock-brokerage packs have no fees.
+create_tenant acme-health   "Acme Specialist Hospital" healthcare "Africa/Lagos" "NGN" "en-NG"
+create_tenant acme-agro     "Acme Agro Cooperative"   agriculture "Africa/Lagos"  "NGN" "en-NG"
+create_tenant acme-fashion  "Acme Fashion House"      fashion     "Africa/Lagos"  "NGN" "en-NG"
 
 echo "Seed complete. Industry packs are applied asynchronously by the TenantOnboardingWorkflow."
